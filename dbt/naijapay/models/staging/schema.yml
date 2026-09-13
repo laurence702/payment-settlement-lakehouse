@@ -1,0 +1,47 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: One row per transaction_ref, deduplicated upstream by Spark.
+    columns:
+      - name: transaction_ref
+        description: Natural key. If this is ever non-unique, dedupe is broken.
+        data_tests: [unique, not_null]
+      - name: merchant_id
+        data_tests: [not_null]
+      - name: status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['pending', 'success', 'failed', 'reversed']
+      - name: channel
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['card', 'bank_transfer', 'ussd', 'qr']
+      - name: currency
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['NGN', 'USD']
+      - name: amount_ngn_kobo
+        data_tests: [not_null]
+      - name: event_date
+        data_tests: [not_null]
+
+  - name: stg_settlements
+    description: One row per settlement_id.
+    columns:
+      - name: settlement_id
+        data_tests: [unique, not_null]
+      - name: transaction_ref
+        data_tests:
+          - not_null
+          # Every settlement must point at a transaction we have seen. A failure
+          # here is an ingestion gap, not a cosmetic issue.
+          - relationships:
+              arguments:
+                to: ref('stg_transactions')
+                field: transaction_ref
+      - name: net_kobo
+        data_tests: [not_null]
