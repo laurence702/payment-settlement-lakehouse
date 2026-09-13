@@ -1,0 +1,15 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+logs/
+dbt/settlement/target/
+dbt/settlement/dbt_packages/
+dbt/settlement/logs/
+data/local/
+*.duckdb
+*.duckdb.wal
+.pytest_cache/
+.ruff_cache/
