@@ -1,0 +1,44 @@
+version: 2
+
+models:
+  - name: fct_transactions
+    description: One row per transaction_ref.
+    columns:
+      - name: transaction_ref
+        data_tests: [unique, not_null]
+
+  - name: fct_settlements
+    description: One row per settlement_id, joined back to its transaction.
+    columns:
+      - name: settlement_id
+        data_tests: [unique, not_null]
+
+  - name: mart_settlement_reconciliation
+    description: >
+      Successful charges and whether the money has arrived. The model this
+      pipeline exists to produce.
+    columns:
+      - name: transaction_ref
+        data_tests: [unique, not_null]
+      - name: reconciliation_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['settled', 'pending_t1', 'pending_t2', 'pending_within_sla', 'breached_sla']
+      - name: outstanding_net_kobo
+        data_tests: [not_null]
+
+  - name: mart_merchant_daily
+    description: One row per merchant per day.
+    columns:
+      - name: merchant_id
+        data_tests: [not_null]
+      - name: event_date
+        data_tests: [not_null]
+
+  - name: mart_channel_performance
+    description: One row per channel, bank, gateway and day.
+    columns:
+      - name: event_date
+        data_tests: [not_null]
