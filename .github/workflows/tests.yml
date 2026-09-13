@@ -1,0 +1,51 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# The point of this workflow: the whole test suite runs without Docker, Kafka,
+# an object store or ClickHouse. If any of it needed those, it could not run
+# here, and "the pipeline is tested" would mean "the pipeline was tested once,
+# on a laptop, by me".
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # PySpark 4.x needs a JVM. Nothing else here does.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest ruff pyarrow "pyspark==4.2.0" \
+            "dbt-core==1.12.4" "dbt-duckdb==1.11.0" "duckdb==1.5.5"
+
+      - name: Lint
+        run: |
+          ruff check src tests dags
+          ruff format --check src tests dags
+
+      - name: Unit tests
+        run: pytest -m "not slow"
+
+      - name: Spark transform tests
+        run: pytest -m slow tests/test_transform_spark.py
+
+      # Builds every dbt model and runs every dbt test against local Parquet
+      # produced by the real Spark job, not a stand-in for it.
+      - name: dbt build and test
+        env:
+          DBT_BIN: dbt
+        run: pytest -m slow tests/test_dbt.py
