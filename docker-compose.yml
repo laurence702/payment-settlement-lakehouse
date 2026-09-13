@@ -1,0 +1,159 @@
+# ---------------------------------------------------------------------------
+# naijapay-lakehouse: Airflow 3 on LocalExecutor, layered on top of the shared
+# platform.
+#
+# The platform services are pulled in with `include:` rather than copy-pasted,
+# so Kafka/SeaweedFS/ClickHouse are defined in exactly one place. The shared repo is
+# a git submodule, which is what makes `git clone --recurse-submodules` enough
+# for someone reviewing this.
+#
+# Requires docker compose >= 2.20 for include:.
+# ---------------------------------------------------------------------------
+
+include:
+  - path: ${INFRA_ROOT}/docker-compose.yml
+    env_file: ${INFRA_ROOT}/.env
+
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE}
+  build:
+    context: .
+    dockerfile: docker/airflow/Dockerfile
+    args:
+      AIRFLOW_BASE_IMAGE: ${AIRFLOW_BASE_IMAGE}
+  user: "${AIRFLOW_UID}:0"
+  env_file:
+    - ${INFRA_ROOT}/.env
+    - .env
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Identical in every container. See .env for why this is load-bearing.
+    AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW_JWT_SECRET}
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+    # Throttled hard on purpose: LocalExecutor forks tasks inside the scheduler
+    # container, so parallelism here is memory spent inside MEM_AIRFLOW_SCHEDULER.
+    AIRFLOW__CORE__PARALLELISM: "4"
+    AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG: "2"
+    AIRFLOW__CORE__MAX_ACTIVE_RUNS_PER_DAG: "1"
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
+    PYTHONPATH: /opt/airflow/src
+    # Object store + warehouse endpoints, read by src/naijapay/config.py.
+    # 8333 is SeaweedFS's S3 port. The host still publishes it on 9000; this
+    # is the container-side address, so it is 8333.
+    S3_ENDPOINT: seaweedfs:8333
+    S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+    S3_SECRET_KEY: ${S3_SECRET_KEY}
+    KAFKA_BOOTSTRAP: kafka:19092
+    CLICKHOUSE_HOST: clickhouse
+    CLICKHOUSE_PORT: "8123"
+    DBT_VENV: /home/airflow/dbt-venv
+    DBT_PROJECT_DIR: /opt/airflow/dbt/naijapay
+  volumes:
+    # Long syntax: PROJECT_ROOT contains a space.
+    - type: bind
+      source: ${PROJECT_ROOT}/dags
+      target: /opt/airflow/dags
+    - type: bind
+      source: ${PROJECT_ROOT}/src
+      target: /opt/airflow/src
+    - type: bind
+      source: ${PROJECT_ROOT}/dbt
+      target: /opt/airflow/dbt
+    - type: bind
+      source: ${PROJECT_ROOT}/sql
+      target: /opt/airflow/sql
+    - airflow_logs:/opt/airflow/logs
+  networks: [data_network]
+
+services:
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: np_airflow_init
+    profiles: ["airflow"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        echo "running db migrations"
+        airflow db migrate
+        echo "creating admin user (idempotent)"
+        airflow users create \
+          --username "${AIRFLOW_ADMIN_USER}" \
+          --password "${AIRFLOW_ADMIN_PASSWORD}" \
+          --firstname Local --lastname Admin \
+          --role Admin --email admin@localhost || true
+        echo "airflow-init complete"
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    container_name: np_airflow_apiserver
+    profiles: ["airflow"]
+    command: api-server
+    ports:
+      - "${PORT_AIRFLOW}:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    mem_limit: ${MEM_AIRFLOW_APISERVER}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    restart: unless-stopped
+
+  airflow-scheduler:
+    <<: *airflow-common
+    container_name: np_airflow_scheduler
+    profiles: ["airflow"]
+    command: scheduler
+    depends_on:
+      airflow-apiserver:
+        condition: service_healthy
+    mem_limit: ${MEM_AIRFLOW_SCHEDULER}
+    healthcheck:
+      # $$(hostname), not $${HOSTNAME}: docker CMD-SHELL runs /bin/sh, which is
+      # dash on this image, and dash does not set HOSTNAME. The variable form
+      # expands to an empty string and the check silently matches nothing.
+      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\""]
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    container_name: np_airflow_dagproc
+    profiles: ["airflow"]
+    command: dag-processor
+    depends_on:
+      airflow-apiserver:
+        condition: service_healthy
+    mem_limit: ${MEM_AIRFLOW_DAGPROC}
+    restart: unless-stopped
+
+  # No triggerer. It is only needed for deferrable operators and this DAG has
+  # none; running it would cost ~350 MB for nothing. Add it back the moment you
+  # introduce a sensor that defers.
+
+volumes:
+  airflow_logs:
+
+networks:
+  data_network:
+    name: shared_data_network
+    external: true
