@@ -1,0 +1,12 @@
+version: 2
+
+sources:
+  - name: staged
+    description: >
+      Parquet written by the Spark raw-to-staged job. One row per transaction
+      (deduplicated, latest status wins) and one row per settlement.
+    meta:
+      location: s3://lakehouse-staged
+    tables:
+      - name: transactions
+      - name: settlements

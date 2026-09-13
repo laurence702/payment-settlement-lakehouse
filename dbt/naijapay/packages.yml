@@ -1,0 +1,11 @@
+# Deliberately empty.
+#
+# The obvious dependency here is dbt_utils, for dbt_utils.accepted_range on the
+# success_rate columns. It is not worth it: adding any package means the Airflow
+# image must run `dbt deps` and therefore needs outbound internet on every DAG
+# run, which fails opaquely behind a proxy and is a genuinely bad property for a
+# scheduled job. The one macro it was wanted for is ten lines of SQL in
+# tests/assert_success_rate_in_range.sql instead.
+#
+# Add a package here only when it earns that runtime network dependency.
+packages: []

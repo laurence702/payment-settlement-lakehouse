@@ -1,0 +1,40 @@
+name: naijapay
+version: 0.1.0
+config-version: 2
+profile: naijapay
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Anything successful and unsettled beyond this many days is escalated rather
+  # than merely reported. Kept as a var so the threshold is a business decision
+  # in one place, not a magic number buried in a CASE expression.
+  settlement_sla_days: 3
+
+  # Source paths as vars, not hardcoded s3:// literals. This is what makes the
+  # whole project runnable against a directory of local Parquet, which is how
+  # the SQL gets tested in CI without standing up an object store:
+  #   dbt build --vars '{staged_transactions_path: /tmp/x/transactions/**/*.parquet, ...}'
+  staged_transactions_path: "s3://lakehouse-staged/transactions/**/*.parquet"
+  staged_settlements_path:  "s3://lakehouse-staged/settlements/**/*.parquet"
+
+  # Marts bucket. Overridden the same way for a local run.
+  marts_location: "s3://lakehouse-marts"
+
+models:
+  naijapay:
+    staging:
+      # Views over the Parquet in object storage. Nothing is copied; DuckDB reads the
+      # object store directly via httpfs.
+      +materialized: view
+      +schema: staging
+    marts:
+      # Written back to the marts bucket as Parquet so ClickHouse can ingest
+      # them with the s3() table function and Grafana can serve them.
+      +materialized: external
+      +format: parquet

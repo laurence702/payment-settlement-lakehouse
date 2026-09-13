@@ -1,0 +1,30 @@
+# Checked in on purpose: no secrets, only env_var lookups. Real credentials come
+# from the Airflow container's environment.
+naijapay:
+  target: "{{ env_var('DBT_TARGET', 'local') }}"
+  outputs:
+    # Normal path: DuckDB reading and writing the S3 object store over httpfs.
+    local:
+      type: duckdb
+      # Ephemeral catalog. All persistent state is Parquet in object storage; this file
+      # is scratch and safe to delete between runs. That is what stops DuckDB
+      # from becoming a single-writer bottleneck pretending to be a warehouse.
+      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/naijapay.duckdb') }}"
+      threads: 4
+      extensions:
+        - httpfs
+        - parquet
+      settings:
+        s3_endpoint: "{{ env_var('S3_ENDPOINT', 'seaweedfs:8333') }}"
+        s3_access_key_id: "{{ env_var('S3_ACCESS_KEY', 'dataeng') }}"
+        s3_secret_access_key: "{{ env_var('S3_SECRET_KEY', 'dataeng_local_only') }}"
+        s3_use_ssl: false
+        s3_url_style: path
+
+    # No object store, no httpfs, no network. Used by `make test-dbt` to build
+    # and test every model against a directory of local Parquet, which is what
+    # makes the SQL testable in CI without standing up an object store.
+    localfs:
+      type: duckdb
+      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/naijapay.duckdb') }}"
+      threads: 4
