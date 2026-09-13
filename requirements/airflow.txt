@@ -1,0 +1,26 @@
+# Installed into the Airflow environment.
+#
+# The constraint file is the authority for anything it lists, and the Dockerfile
+# derives its URL from the base image's own Python version. Do NOT add a `==`
+# pin here for a package that appears in constraints; that is a guaranteed
+# resolution conflict on first build.
+#
+# Verified 2026-09-09 against constraints-3.3.1 / python 3.12: the full set
+# below resolves to 146 packages with no conflicts, giving pandas 3.0.5,
+# pyarrow 25.0.0, numpy 2.5.1, confluent-kafka 2.15.0, clickhouse-connect 1.6.0,
+# boto3 1.43.56 and providers postgres 7.0.1 / common-sql 2.1.0.
+
+apache-airflow-providers-postgres
+apache-airflow-providers-common-sql
+# Bundled with Airflow 3, listed because the DAG imports BashOperator from it.
+apache-airflow-providers-standard
+
+confluent-kafka
+clickhouse-connect
+boto3
+pandas
+pyarrow
+
+# NOT present in the constraint file, so pinned explicitly.
+# Local mode only, there is no cluster. See docs/adr/0002-spark-local-mode.md.
+pyspark==4.2.0

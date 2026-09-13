@@ -1,0 +1,15 @@
+.env
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+venv/
+logs/
+dbt/naijapay/target/
+dbt/naijapay/dbt_packages/
+dbt/naijapay/logs/
+data/local/
+*.duckdb
+*.duckdb.wal
+.pytest_cache/
+.ruff_cache/
