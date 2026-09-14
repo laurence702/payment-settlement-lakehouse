@@ -111,7 +111,7 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
     # reading a single row of data.
     client.command(
         f"CREATE TABLE {shadow} ENGINE = MergeTree {partition} "
-        f"ORDER BY {spec.order_by} EMPTY AS SELECT * FROM {s3}"
+        f"ORDER BY {spec.order_by} SETTINGS allow_nullable_key = 1 EMPTY AS SELECT * FROM {s3}"
     )
     client.command(f"INSERT INTO {shadow} SELECT * FROM {s3}")
     rows = client.command(f"SELECT count() FROM {shadow}")

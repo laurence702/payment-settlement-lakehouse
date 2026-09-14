@@ -259,8 +259,21 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
             "batch.size": 64 * 1024,
             "compression.type": "lz4",
             "enable.idempotence": True,
+            # With idempotence enabled, librdkafka must complete a metadata
+            # fetch AND allocate a Producer ID (PID) from the broker before
+            # any message can be queued. Until that handshake is done the
+            # internal queue capacity is effectively zero, so the very first
+            # produce() call raises BufferError instantly. Pre-warming via
+            # an initial poll() lets the handshake complete before we start
+            # sending. 100 k messages is well above our 50 k batch ceiling.
+            "queue.buffering.max.messages": 100_000,
         }
     )
+
+    # Pre-warm: block up to 3 s so the broker connection, metadata fetch, and
+    # idempotent PID registration all finish before we touch the produce loop.
+    producer.poll(3)
+
     delivered = 0
     failures: list[str] = []
 
@@ -272,15 +285,29 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
             delivered += 1
 
     for i, ev in enumerate(events):
-        producer.produce(
-            topic,
-            key=ev[key_field].encode(),
-            value=json.dumps(ev, separators=(",", ":")).encode(),
-            on_delivery=_cb,
-        )
-        if i % 5000 == 0:
+        while True:
+            try:
+                producer.produce(
+                    topic,
+                    key=ev[key_field].encode(),
+                    value=json.dumps(ev, separators=(",", ":")).encode(),
+                    on_delivery=_cb,
+                )
+                break
+            except BufferError:
+                # poll() drains delivered callbacks and frees queue slots.
+                # Guard with its own try/except: poll() itself can raise
+                # BufferError when the queue is still saturated, which would
+                # otherwise escape the retry loop.
+                try:
+                    producer.poll(0.5)
+                except BufferError:
+                    pass
+        # Poll every 100 messages (not 1000) to keep the in-flight window
+        # drained and avoid hitting queue limits mid-batch.
+        if i % 100 == 0:
             producer.poll(0)
-    producer.flush(60)
+    producer.flush(120)
 
     if failures:
         raise RuntimeError(f"{len(failures)} deliveries failed, first: {failures[0]}")

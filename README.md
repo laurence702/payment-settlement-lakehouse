@@ -16,17 +16,33 @@ end to end:
 That question is the whole design. Every component below exists because
 answering it correctly needs something that component does.
 
-```
-generator ──▶ Kafka ──▶  S3 (raw)  ──▶ Spark ──▶  S3 (staged)
-                                                      │
-                                                dbt + DuckDB
-                                                      │
-                                             S3 (marts, Parquet)
-                                                      │
-                                        ClickHouse ──▶ Grafana
+```mermaid
+flowchart LR
+    G["<b>generator</b><br/>synthetic Paystack /<br/>Flutterwave events<br/><i>duplicates, out-of-order,<br/>unsettled, reversals</i>"]
+    K["<b>Kafka 4.3.1</b><br/>KRaft, 1 broker<br/><i>19092 in, 9092 out</i>"]
 
-                  Airflow 3 orchestrates all of it
+    subgraph LAKE["&nbsp;SeaweedFS &middot; Parquet is the source of truth&nbsp;"]
+    direction LR
+        R["<b>raw</b><br/>as ingested,<br/>duplicates intact"]
+        S["<b>staged</b><br/>deduped,<br/>latest status wins<br/><i>ordered by updated_at,<br/>status-rank tiebreak</i>"]
+        M["<b>marts</b><br/>settlement reconciliation<br/><i>aged T+1 / T+2 /<br/>within SLA / breached</i>"]
+        R -->|"Spark 4.2<br/>local mode"| S
+        S -->|"dbt + DuckDB<br/>2 views, 5 marts"| M
+    end
+
+    CH["<b>ClickHouse 25.8</b><br/>serving<br/><i>atomic table swap</i>"]
+    GR["<b>Grafana</b>"]
+
+    G -->|produce| K
+    K -->|"ingest.py<br/>manual offsets"| R
+    M -->|serve.py| CH
+    CH --> GR
+
+    classDef zone fill:#fbfbfd,stroke:#9aa4b2,stroke-dasharray:4 3
+    class LAKE zone
 ```
+
+Airflow 3.3.1 orchestrates all of it: one DAG, seven tasks, LocalExecutor.
 
 ## Run it
 

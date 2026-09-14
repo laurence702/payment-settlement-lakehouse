@@ -38,14 +38,39 @@ docker exec np_airflow_scheduler airflow dags trigger naijapay_pipeline --run-id
 
 step "waiting for the run to finish (generate, ingest, spark, dbt, clickhouse)"
 echo "  follow along at http://localhost:${PORT_AIRFLOW}"
+# Ask the CLI to filter by state rather than parsing a column out of its
+# table output. Three things were wrong with doing it the other way:
+#
+#   -d is not a flag. `dags list-runs` takes dag_id positionally, so argparse
+#   rejected it and exited 2, which pipefail turned into the whole script
+#   dying on the first poll with no message.
+#
+#   `| head -1` under `set -o pipefail` can kill the script on SIGPIPE.
+#
+#   `{print $3}` assumed a column position in output nobody promised to keep.
+run_state() {
+  local out
+  out=$(docker exec np_airflow_scheduler \
+          airflow dags list-runs naijapay_pipeline --state failed -o plain 2>/dev/null || true)
+  case "$out" in *"$RUN_ID"*) printf 'failed'; return ;; esac
+  out=$(docker exec np_airflow_scheduler \
+          airflow dags list-runs naijapay_pipeline --state success -o plain 2>/dev/null || true)
+  case "$out" in *"$RUN_ID"*) printf 'success'; return ;; esac
+  printf 'running'
+}
+
 for i in $(seq 1 120); do
-  state=$(docker exec np_airflow_scheduler airflow dags list-runs -d naijapay_pipeline -o plain 2>/dev/null \
-          | awk -v r="$RUN_ID" '$0 ~ r {print $3}' | head -1)
+  state=$(run_state)
   case "$state" in
     success) echo "  succeeded after ~$((i*10))s"; break ;;
-    failed)  echo "  FAILED. Task logs:"; \
-             docker exec np_airflow_scheduler airflow tasks states-for-dag-run naijapay_pipeline "$RUN_ID"; exit 1 ;;
-    *) printf '  %s (%d/120)\r' "${state:-queued}" "$i"; sleep 10 ;;
+    failed)
+      echo "  FAILED. Per-task state:"
+      docker exec np_airflow_scheduler \
+        airflow tasks states-for-dag-run naijapay_pipeline "$RUN_ID" || true
+      echo
+      echo "  Open http://localhost:${PORT_AIRFLOW} and click the red task, then Logs."
+      exit 1 ;;
+    *) printf '  running (%d/120)\r' "$i"; sleep 10 ;;
   esac
 done
 
