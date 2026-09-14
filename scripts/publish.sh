@@ -7,7 +7,7 @@
 set -euo pipefail
 
 OWNER="laurence702"
-REPO="naijapay-lakehouse"
+REPO="paymentsettlement-de"
 INFRA="../data-engineering-shared-infra"
 
 # ---------------------------------------------------------------------------
