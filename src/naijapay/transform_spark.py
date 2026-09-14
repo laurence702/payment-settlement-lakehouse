@@ -72,6 +72,10 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
     s3 = _s3(settings)
+    try:
+        s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
+    except Exception:
+        pass
     n = 0
     for local in sorted(src_dir.rglob("*.parquet")):
         rel = local.relative_to(src_dir).as_posix()
@@ -86,7 +90,12 @@ def build_session(driver_memory: str, shuffle_partitions: int):
 
     return (
         SparkSession.builder.appName("naijapay-raw-to-staged")
-        .master("local[*]")
+        # local[2] instead of local[*]: all executor threads share the single
+        # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
+        # peak RSS of concurrent window-function shuffles exceeds the limit.
+        # Two threads halves the in-flight memory at a ~30 % speed cost that
+        # is irrelevant on a portfolio demo stack.
+        .master("local[2]")
         .config("spark.driver.memory", driver_memory)
         # The default of 200 shuffle partitions on a laptop produces 200 tiny
         # files and spends more time on task overhead than on the actual work.
@@ -95,6 +104,10 @@ def build_session(driver_memory: str, shuffle_partitions: int):
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
         .config("spark.driver.host", "127.0.0.1")
+        # Reduce the fraction of heap Spark reserves for execution/storage so
+        # JVM metaspace + Python overhead fits within the container budget.
+        .config("spark.memory.fraction", "0.6")
+        .config("spark.memory.storageFraction", "0.3")
         .getOrCreate()
     )
 
