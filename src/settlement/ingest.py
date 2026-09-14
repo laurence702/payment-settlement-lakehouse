@@ -148,7 +148,22 @@ def drain_topic(
 
         flush()
         if stats["consumed"]:
-            consumer.commit(asynchronous=False)
+            # Guard against _NO_OFFSET: when the final consumed batch was an
+            # exact multiple of batch_rows, the intermediate commit at line 147
+            # already committed all offsets. The trailing commit has nothing
+            # left to store and librdkafka raises _NO_OFFSET. That is not an
+            # error — it means everything was already safely committed.
+            try:
+                consumer.commit(asynchronous=False)
+            except Exception as exc:
+                from confluent_kafka import KafkaError, KafkaException
+                if (
+                    isinstance(exc, KafkaException)
+                    and exc.args[0].code() == KafkaError._NO_OFFSET
+                ):
+                    pass
+                else:
+                    raise
     finally:
         consumer.close()
 

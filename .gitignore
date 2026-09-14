@@ -13,3 +13,6 @@ data/local/
 *.duckdb.wal
 .pytest_cache/
 .ruff_cache/
+
+*.log
+.user.yml

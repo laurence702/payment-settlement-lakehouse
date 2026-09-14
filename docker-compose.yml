@@ -27,6 +27,16 @@ x-airflow-common: &airflow-common
     - .env
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    HOME: /home/airflow
+    # AIRFLOW_UID is the host uid so bind-mounted files stay editable, but that
+    # uid is not in the image's /etc/passwd. The image entrypoint normally adds
+    # it; airflow-init overrides the entrypoint with /bin/bash and so skips
+    # that. Airflow's CLI then calls getpass.getuser() while building metrics
+    # and dies with "No username set in the environment" before it runs
+    # anything. getuser() reads LOGNAME/USER/LNAME/USERNAME before it touches
+    # the passwd database, so setting these short-circuits the lookup.
+    LOGNAME: airflow
+    USER: airflow
     AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
     AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
@@ -69,14 +79,14 @@ x-airflow-common: &airflow-common
       source: ${PROJECT_ROOT}/sql
       target: /opt/airflow/sql
     - airflow_logs:/opt/airflow/logs
-  networks: [data_network]
+  networks: [ data_network ]
 
 services:
 
   airflow-init:
     <<: *airflow-common
     container_name: np_airflow_init
-    profiles: ["airflow"]
+    profiles: [ "airflow" ]
     depends_on:
       postgres:
         condition: service_healthy
@@ -88,18 +98,28 @@ services:
         echo "running db migrations"
         airflow db migrate
         echo "creating admin user (idempotent)"
-        airflow users create \
-          --username "${AIRFLOW_ADMIN_USER}" \
-          --password "${AIRFLOW_ADMIN_PASSWORD}" \
-          --firstname Local --lastname Admin \
-          --role Admin --email admin@localhost || true
+        if ! airflow users create \
+              --username "${AIRFLOW_ADMIN_USER}" \
+              --password "${AIRFLOW_ADMIN_PASSWORD}" \
+              --firstname Local --lastname Admin \
+              --role Admin --email admin@localhost; then
+          echo
+          echo "WARNING: could not create the admin user."
+          echo "  'airflow users' is a FAB-provider command. If the FAB provider is"
+          echo "  not installed, the active auth manager is the built-in"
+          echo "  SimpleAuthManager, which generates its own password. Read it with:"
+          echo "    docker exec np_airflow_apiserver sh -c 'cat \$AIRFLOW_HOME/simple_auth_manager_passwords.json.generated'"
+          echo "  The UI will render a login form either way, and nothing will work"
+          echo "  until one of those two is true. Do not let this pass silently again."
+          echo
+        fi
         echo "airflow-init complete"
     restart: "no"
 
   airflow-apiserver:
     <<: *airflow-common
     container_name: np_airflow_apiserver
-    profiles: ["airflow"]
+    profiles: [ "airflow" ]
     command: api-server
     ports:
       - "${PORT_AIRFLOW}:8080"
@@ -108,7 +128,7 @@ services:
         condition: service_completed_successfully
     mem_limit: ${MEM_AIRFLOW_APISERVER}
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health" ]
       interval: 15s
       timeout: 10s
       retries: 10
@@ -118,7 +138,7 @@ services:
   airflow-scheduler:
     <<: *airflow-common
     container_name: np_airflow_scheduler
-    profiles: ["airflow"]
+    profiles: [ "airflow" ]
     command: scheduler
     depends_on:
       airflow-apiserver:
@@ -128,7 +148,7 @@ services:
       # $$(hostname), not $${HOSTNAME}: docker CMD-SHELL runs /bin/sh, which is
       # dash on this image, and dash does not set HOSTNAME. The variable form
       # expands to an empty string and the check silently matches nothing.
-      test: ["CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\""]
+      test: [ "CMD-SHELL", "airflow jobs check --job-type SchedulerJob --hostname \"$$(hostname)\"" ]
       interval: 30s
       timeout: 15s
       retries: 5
@@ -138,14 +158,13 @@ services:
   airflow-dag-processor:
     <<: *airflow-common
     container_name: np_airflow_dagproc
-    profiles: ["airflow"]
+    profiles: [ "airflow" ]
     command: dag-processor
     depends_on:
       airflow-apiserver:
         condition: service_healthy
     mem_limit: ${MEM_AIRFLOW_DAGPROC}
     restart: unless-stopped
-
   # No triggerer. It is only needed for deferrable operators and this DAG has
   # none; running it would cost ~350 MB for nothing. Add it back the moment you
   # introduce a sensor that defers.
