@@ -115,13 +115,21 @@ integer arithmetic. Naira conversion happens once, at the presentation edge, and
 never inside an aggregate.
 
 USD charges convert at a stored FX rate (`NGN_PER_USD`, static on purpose: a
-real pipeline joins an FX table) and truncate to integer kobo. That produces a
-small, genuine rounding drift.
+real pipeline joins an FX table) and truncate to integer kobo, which is where a
+rounding drift would enter if one entered anywhere.
 
-The drift is not hidden. It is surfaced as `settlement_variance_kobo` in the
-reconciliation mart, and `src/naijapay/quality.py` warns on drift consistent
-with rounding while failing on drift large enough to be a pricing error. To see
-the actual figure for your run:
+Settlement lands days after the charge, so the generator re-samples its own FX
+rate at settlement time instead of reusing the one from checkout, the same way
+a real PSP settles at whatever rate is current then, not the rate quoted up
+front. The two integer truncations, one at charge time and one at settlement
+time, no longer land on the same value, so a small non-zero variance is
+expected on every run rather than something that would only turn up in
+production.
+
+Whether it does is measured rather than assumed. Every settled row carries
+`settlement_variance_kobo`, and `src/naijapay/quality.py` warns on drift
+consistent with rounding while failing on drift large enough to be a pricing
+error (more than 100 kobo average per settled row). To check your own run:
 
 ```sql
 SELECT sum(settlement_variance_kobo), count()
