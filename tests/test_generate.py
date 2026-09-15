@@ -86,3 +86,33 @@ def test_usd_transactions_carry_an_fx_rate(events_small):
 def test_ngn_transactions_have_no_fx_rate(events_small):
     tx, _ = events_small
     assert all(e["fx_rate_to_ngn"] is None for e in tx if e["currency"] == "NGN")
+
+
+def test_settlement_fx_is_resampled_independently_of_charge_fx(events_small):
+    """Regression test for the fix that stopped settlement reusing the
+    charge-time fx. Before the fix this was a tautology: settlement gross
+    always equalled int(amount_kobo * charge_fx), so
+    settlement_variance_kobo was provably zero for every row instead of
+    carrying the small, real drift the mart and quality.py's soft check
+    both expect."""
+    tx, stl = events_small
+    usd_by_ref = {
+        e["transaction_ref"]: (e["amount_kobo"], e["fx_rate_to_ngn"])
+        for e in tx
+        if e["currency"] == "USD"
+    }
+    compared = 0
+    mismatches = 0
+    for s in stl:
+        info = usd_by_ref.get(s["transaction_ref"])
+        if info is None:
+            continue
+        amount_kobo, charge_fx = info
+        compared += 1
+        if int(amount_kobo * charge_fx) != s["gross_kobo"]:
+            mismatches += 1
+    assert compared > 10, "too few USD settlements to test independence"
+    assert mismatches > 0, (
+        "every USD settlement matches the charge-time fx exactly: "
+        "settlement is not resampling its own fx"
+    )
