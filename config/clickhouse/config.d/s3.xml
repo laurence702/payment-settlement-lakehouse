@@ -1,0 +1,15 @@
+<clickhouse>
+    <!-- Named collection so pipeline SQL says s3(s3_lakehouse, ...) instead of
+         pasting an access key into every query and every dbt model.
+
+         Named s3_lakehouse, not seaweedfs_lakehouse. The collection describes
+         a protocol, not a vendor; that is the whole reason swapping the server
+         underneath it did not touch a single line of pipeline SQL. -->
+    <named_collections>
+        <s3_lakehouse>
+            <url>http://seaweedfs:8333/</url>
+            <access_key_id from_env="S3_ACCESS_KEY"/>
+            <secret_access_key from_env="S3_SECRET_KEY"/>
+        </s3_lakehouse>
+    </named_collections>
+</clickhouse>

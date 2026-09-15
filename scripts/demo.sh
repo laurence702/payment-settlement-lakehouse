@@ -5,20 +5,17 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-INFRA="${INFRA:-../data-engineering-shared-infra}"
 [ -f .env ] || { echo "no .env. Run: make bootstrap"; exit 1; }
-# Platform env first: the PORT_* in the summary below live in that file.
-set -a; . "$INFRA/.env"; . ./.env; set +a
+set -a; . ./.env; set +a
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
 step "preflight"
-make -s -C "$INFRA" preflight
+make -s preflight
 
-step "starting platform and airflow (~5.2 GB, this is the whole budget)"
-# Both env files, same order and reason as COMPOSE in the Makefile.
+step "starting platform and airflow (~5.5 GB, this is the whole budget)"
 COMPOSE_PROFILES=core,stream,warehouse,airflow \
-  docker compose --env-file "$INFRA/.env" --env-file .env up -d
+  docker compose --env-file .env up -d
 
 step "waiting for airflow api-server to pass its healthcheck"
 for i in $(seq 1 60); do
@@ -97,6 +94,5 @@ Done.
   Airflow      http://localhost:${PORT_AIRFLOW}   (${AIRFLOW_ADMIN_USER} / ${AIRFLOW_ADMIN_PASSWORD})
   Files        http://localhost:${PORT_S3_UI}/buckets/   (SeaweedFS filer UI: raw/staged/marts)
   ClickHouse   http://localhost:${PORT_CLICKHOUSE_HTTP}/play
-  Grafana      start it with: make -C ${INFRA} up-observe   (needs kafka stopped, see the memory budget)
 
 MSG

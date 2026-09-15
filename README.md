@@ -31,12 +31,10 @@ flowchart LR
     end
 
     CH["<b>ClickHouse 25.8</b><br/>serving<br/><i>atomic table swap</i>"]
-    GR["<b>Grafana</b>"]
 
     G -->|produce| K
     K -->|"ingest.py<br/>manual offsets"| R
     M -->|serve.py| CH
-    CH --> GR
 
     classDef zone fill:#fbfbfd,stroke:#9aa4b2,stroke-dasharray:4 3
     class LAKE zone
@@ -46,15 +44,16 @@ Airflow 3.3.1 orchestrates all of it: one DAG, seven tasks, LocalExecutor.
 
 ## Run it
 
-Needs Colima or Docker Desktop with 6 GB, and Docker Compose 2.20 or newer for
-the `include:` directive.
+Needs Colima or Docker Desktop with 6 GB, and Docker Compose v2. One clone,
+one `.env`: the platform layer (Kafka, SeaweedFS, ClickHouse, Postgres, Redis)
+is defined in this repo's own `docker-compose.yml`, not pulled in from
+anywhere else.
 
 ```bash
 git clone https://github.com/laurence702/payment-settlement-lakehouse
-git clone https://github.com/laurence702/data-engineering-shared-infra   # sibling dir
-
 cd payment-settlement-lakehouse
-make bootstrap    # resolves absolute paths into .env
+
+make bootstrap    # resolves absolute paths and generates secrets into .env
 make preflight    # docker, memory, ports, image pins, env sanity
 make build        # airflow image: pyspark + JRE + isolated dbt venv
 make demo         # start everything, run the DAG, print the reconciliation
@@ -63,11 +62,6 @@ make demo         # start everything, run the DAG, print the reconciliation
 `make preflight` is not optional politeness. It checks the things that actually
 break this stack, and it fails in two seconds instead of eight minutes into an
 image pull. Run it first.
-
-The platform services (Kafka, SeaweedFS, ClickHouse, Postgres, Redis) live in a
-sibling repo and get pulled in through Compose's `include:` rather than
-copy-pasted, so every service is defined exactly once. Point `INFRA` elsewhere
-if your layout differs: `make up INFRA=/path/to/shared-infra`.
 
 `make demo` finishes by printing reconciliation buckets straight out of
 ClickHouse. `make urls` prints where to point a browser.
@@ -165,10 +159,10 @@ constraint rather than an inconvenience, and it drove most of
 ```
 core (postgres + seaweedfs + redis)  0.76 GB
 kafka                                0.77 GB
-clickhouse                           1.00 GB
+clickhouse                           1.28 GB
 airflow api + scheduler + dagproc    2.71 GB
 -------------------------------------------
-                                     5.24 GB    ~0.76 GB left for dockerd
+                                     5.52 GB    ~0.48 GB left for dockerd
 ```
 
 Every service sits behind a Compose profile and declares a `mem_limit`. The
@@ -176,14 +170,12 @@ limits were sized backwards from one binding constraint: the local-mode Spark
 driver runs as a subprocess of the Airflow scheduler, so it has to fit under the
 scheduler's ceiling. Raise one number and you lower another.
 
-There is no `make up-all` target, deliberately. Prometheus and Grafana do not
-fit alongside Kafka, ClickHouse and Airflow, so you stop Kafka after ingest and
-start them in the gap:
-
-```bash
-docker compose stop kafka
-make -C ../data-engineering-shared-infra up-observe
-```
+There is no `make up-all` target, deliberately: nothing in this budget has
+slack left over. Prometheus and Grafana were never part of it; ClickHouse's
+own `/play` UI and `make ch` cover what this pipeline's own question needs.
+(They still exist in data-engineering-shared-infra, the sibling repo this
+platform layer started out shared with, behind its own `observe` profile, for
+projects that do want them.)
 
 `make mem` prints live usage against the budget.
 
@@ -238,6 +230,7 @@ non-obvious choices.
 - [0003](docs/adr/0003-profiles-and-the-6gb-budget.md) Compose profiles and the 6 GB budget
 - [0004](docs/adr/0004-kraft-and-pinned-images.md) KRaft, and one place for every version pin
 - [0005](docs/adr/0005-object-store-minio-is-a-dead-end.md) SeaweedFS replaces MinIO
+- [0006](docs/adr/0006-vendor-the-platform-layer.md) The platform layer is vendored into this repo, not shared
 
 0005 is the interesting one. A pinned MinIO image turned out never to have been
 published, which surfaced that MinIO had stopped shipping free container images
