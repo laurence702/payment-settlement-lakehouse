@@ -1,4 +1,4 @@
-# naijapay-lakehouse
+# payment-settlement-lakehouse
 #
 # The platform (kafka, seaweedfs, clickhouse, postgres) lives in ../data-engineering-shared-infra
 # and is pulled in through the compose `include:`. INFRA points at it.

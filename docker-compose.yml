@@ -1,11 +1,12 @@
 # ---------------------------------------------------------------------------
-# naijapay-lakehouse: Airflow 3 on LocalExecutor, layered on top of the shared
-# platform.
+# payment-settlement-lakehouse: Airflow 3 on LocalExecutor, layered on top of
+# the shared platform.
 #
 # The platform services are pulled in with `include:` rather than copy-pasted,
-# so Kafka/SeaweedFS/ClickHouse are defined in exactly one place. The shared repo is
-# a git submodule, which is what makes `git clone --recurse-submodules` enough
-# for someone reviewing this.
+# so Kafka/SeaweedFS/ClickHouse are defined in exactly one place. The shared repo
+# is a plain sibling directory (data-engineering-shared-infra), not a git
+# submodule: clone it separately next to this one (see Quickstart in the
+# README) and `make bootstrap` resolves INFRA_ROOT to it.
 #
 # Requires docker compose >= 2.20 for include:.
 # ---------------------------------------------------------------------------
