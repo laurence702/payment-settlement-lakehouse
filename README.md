@@ -3,7 +3,7 @@
 A settlement reconciliation pipeline for Nigerian card and bank-transfer
 payments, sized to run on one laptop.
 
-[![tests](https://github.com/laurence702/naijapay-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/naijapay-lakehouse/actions/workflows/tests.yml)
+[![tests](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Synthetic Paystack and Flutterwave-shaped events go into Kafka. Deduped,
@@ -50,10 +50,10 @@ Needs Colima or Docker Desktop with 6 GB, and Docker Compose 2.20 or newer for
 the `include:` directive.
 
 ```bash
-git clone https://github.com/laurence702/naijapay-lakehouse
+git clone https://github.com/laurence702/payment-settlement-lakehouse
 git clone https://github.com/laurence702/data-engineering-shared-infra   # sibling dir
 
-cd naijapay-lakehouse
+cd payment-settlement-lakehouse
 make bootstrap    # resolves absolute paths into .env
 make preflight    # docker, memory, ports, image pins, env sanity
 make build        # airflow image: pyspark + JRE + isolated dbt venv
@@ -71,6 +71,10 @@ if your layout differs: `make up INFRA=/path/to/shared-infra`.
 
 `make demo` finishes by printing reconciliation buckets straight out of
 ClickHouse. `make urls` prints where to point a browser.
+
+The repo is named for what it does; the code is named for the product it models.
+`src/naijapay/`, the dbt project, the ClickHouse database and the DAG id are all
+`naijapay`. Nothing is wrong if you see both names.
 
 ## What is actually hard here
 

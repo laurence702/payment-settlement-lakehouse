@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Publish naijapay-lakehouse (and its sibling platform repo) to GitHub.
+# Publish payment-settlement-lakehouse (and its sibling platform repo) to GitHub.
 #
-# Run from ~/development/Data_Engineering/naijapay-lakehouse
+# Run from ~/development/Data_Engineering/payment-settlement-lakehouse
 # Nothing here is destructive until STEP 3. Steps 0-2 only read.
 
 set -euo pipefail
@@ -37,7 +37,7 @@ if [ -d "$INFRA/.git" ]; then
     git remote get-url origin >/dev/null 2>&1 || \
       gh repo create "$OWNER/data-engineering-shared-infra" \
         --public --source=. --remote=origin --push \
-        --description "Local data platform for the naijapay-lakehouse pipeline. Postgres, Kafka (KRaft), ClickHouse, SeaweedFS, Redis, Prometheus and Grafana, every service behind a Compose profile with a memory limit, every image tag pinned in one place."
+        --description "Local data platform for the payment-settlement-lakehouse pipeline. Postgres, Kafka (KRaft), ClickHouse, SeaweedFS, Redis, Prometheus and Grafana, every service behind a Compose profile with a memory limit, every image tag pinned in one place."
     gh repo edit "$OWNER/data-engineering-shared-infra" \
       --add-topic docker-compose --add-topic kafka --add-topic clickhouse \
       --add-topic seaweedfs --add-topic data-engineering --add-topic local-development

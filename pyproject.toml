@@ -1,5 +1,5 @@
 [project]
-name = "naijapay-lakehouse"
+name = "naijapay"
 version = "0.1.0"
 description = "Nigerian payments settlement reconciliation lakehouse"
 requires-python = ">=3.11"
