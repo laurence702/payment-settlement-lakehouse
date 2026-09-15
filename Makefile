@@ -1,21 +1,12 @@
 # payment-settlement-lakehouse
 #
-# The platform (kafka, seaweedfs, clickhouse, postgres) lives in ../data-engineering-shared-infra
-# and is pulled in through the compose `include:`. INFRA points at it.
+# The platform (kafka, seaweedfs, clickhouse, postgres, redis) is defined in
+# this repo's own docker-compose.yml, not pulled in from a sibling repo.
+# One clone, one .env, no INFRA path to resolve.
 
 SHELL := /bin/bash
 
-# INFRA must be assigned BEFORE COMPOSE. COMPOSE uses := (simple expansion),
-# so $(INFRA) is resolved on the spot; declared the other way round it expands
-# to an empty string and compose is handed `--env-file /.env`.
-INFRA ?= ../data-engineering-shared-infra
-
-# Platform env first, this project's second: compose reads them left to right
-# and later wins, so local keys override platform ones. Naming ./.env is not
-# optional, because passing --env-file at all disables the implicit load.
-# Drop the platform file and ${POSTGRES_USER} in docker-compose.yml
-# interpolates to empty, and Airflow reaches postgres as nobody.
-COMPOSE := docker compose --env-file $(INFRA)/.env --env-file .env
+COMPOSE := docker compose --env-file .env
 # COMPOSE_PROFILES rather than --profile flags: flag placement relative to the
 # subcommand changed across compose releases, and `docker compose --profile x
 # build` is rejected outright by some of them. The env var works everywhere.
@@ -32,14 +23,13 @@ help:  ## Show this help
 	@echo
 	@echo "  First run:  make bootstrap && make build && make demo"
 
-bootstrap:  ## Create .env files and write absolute paths into them
+bootstrap:  ## Create .env and write absolute paths / generated secrets into it
 	@if [ ! -f .env ]; then cp .env.example .env; echo "created .env"; fi
 	@if sed --version >/dev/null 2>&1; then SEDI=(-i); else SEDI=(-i ''); fi; \
-	  here="$$(pwd)"; infra="$$(cd $(INFRA) && pwd)"; \
+	  here="$$(pwd)"; \
 	  sed "$${SEDI[@]}" "s|^PROJECT_ROOT=.*|PROJECT_ROOT=\"$${here}\"|" .env; \
-	  sed "$${SEDI[@]}" "s|^INFRA_ROOT=.*|INFRA_ROOT=\"$${infra}\"|" .env; \
 	  sed "$${SEDI[@]}" "s|^AIRFLOW_UID=.*|AIRFLOW_UID=$$(id -u)|" .env; \
-	  echo "PROJECT_ROOT=\"$${here}\""; echo "INFRA_ROOT=\"$${infra}\""; echo "AIRFLOW_UID=$$(id -u)"
+	  echo "PROJECT_ROOT=\"$${here}\""; echo "AIRFLOW_UID=$$(id -u)"
 	@if grep -q '^AIRFLOW_FERNET_KEY=GENERATE_ME' .env 2>/dev/null; then \
 	  k=$$(python3 -c 'import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())'); \
 	  if sed --version >/dev/null 2>&1; then sed -i "s|^AIRFLOW_FERNET_KEY=.*|AIRFLOW_FERNET_KEY=$$k|" .env; \
@@ -50,24 +40,24 @@ bootstrap:  ## Create .env files and write absolute paths into them
 	  if sed --version >/dev/null 2>&1; then sed -i "s|^AIRFLOW_JWT_SECRET=.*|AIRFLOW_JWT_SECRET=$$k|" .env; \
 	  else sed -i '' "s|^AIRFLOW_JWT_SECRET=.*|AIRFLOW_JWT_SECRET=$$k|" .env; fi; \
 	  echo "generated AIRFLOW_JWT_SECRET"; fi
-	@set -a; . ./.env; set +a; [ -d "$$PROJECT_ROOT" ] && [ -d "$$INFRA_ROOT" ] \
-	  && echo "  .env sources cleanly and both paths resolve" \
+	@set -a; . ./.env; set +a; [ -d "$$PROJECT_ROOT" ] \
+	  && echo "  .env sources cleanly and PROJECT_ROOT resolves" \
 	  || { echo "  ERROR: .env does not source cleanly"; exit 1; }
-	@$(MAKE) --no-print-directory -C $(INFRA) bootstrap
+	@echo "bootstrap complete. Next: make preflight"
 
-verify-images:  ## Check every pinned image tag resolves (delegates to the platform repo)
-	@$(MAKE) --no-print-directory -C $(INFRA) verify-images
+verify-images:  ## Check every pinned image tag resolves
+	@./scripts/verify-images.sh
 
 preflight:  ## Check this project's .env, then docker/memory/disk/ports/pins
 	@./scripts/check-env.sh
 	@echo
-	@$(MAKE) --no-print-directory -C $(INFRA) preflight
+	@./scripts/preflight.sh
 
 build:  ## Build the airflow image (installs pyspark, dbt venv, duckdb extensions)
 	@COMPOSE_PROFILES=core,airflow $(COMPOSE) build
 
-up:  ## Start core + kafka + clickhouse + airflow. ~5.2 GB. See the budget in help.
-	@$(MAKE) --no-print-directory -C $(INFRA) preflight
+up:  ## Start core + kafka + clickhouse + airflow. ~5.5 GB. See the budget in help.
+	@$(MAKE) --no-print-directory preflight
 	@COMPOSE_PROFILES=$(ALL_PROFILES) $(COMPOSE) up -d
 	@echo
 	@./scripts/urls.sh
@@ -107,8 +97,10 @@ dbt-shell:  ## dbt CLI inside the container, against the object store
 	@docker exec -it -w /opt/airflow/dbt/naijapay np_airflow_scheduler \
 	  /home/airflow/dbt-venv/bin/dbt $(ARGS)
 
-ch:  ## clickhouse-client
-	@$(MAKE) --no-print-directory -C $(INFRA) ch
+ch:  ## clickhouse-client shell
+	@docker exec -it dp_clickhouse clickhouse-client \
+	  --user $$(grep '^CLICKHOUSE_USER=' .env | cut -d= -f2) \
+	  --password $$(grep '^CLICKHOUSE_PASSWORD=' .env | cut -d= -f2)
 
 # ---------------------------------------------------------------------------
 # Tests. None of these need docker, kafka, seaweedfs or clickhouse.
