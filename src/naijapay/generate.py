@@ -220,8 +220,18 @@ def generate_events(
             settled_at = datetime.combine(
                 sdate, datetime.min.time(), tzinfo=UTC
             ) + timedelta(hours=rng.uniform(9, 17))
-            gross = amount if currency == "NGN" else int(amount * (fx or NGN_PER_USD))
-            gross_fee = fee if currency == "NGN" else int(fee * (fx or NGN_PER_USD))
+            # Re-sample the FX rate at settlement time rather than reusing the
+            # charge-time `fx`. Settlement lands days after the charge, and a
+            # real PSP settles at whatever rate is current then, not the rate
+            # quoted at checkout. Reusing `fx` here made settlement_variance_kobo
+            # provably zero for every row (both sides truncated the identical
+            # amount * fx product) instead of the small, real drift the mart and
+            # quality.py's soft check both expect and are built to tolerate.
+            settlement_fx = (
+                NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
+            )
+            gross = amount if currency == "NGN" else int(amount * settlement_fx)
+            gross_fee = fee if currency == "NGN" else int(fee * settlement_fx)
             settlements.append(
                 {
                     "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
