@@ -6,6 +6,15 @@
     <uncompressed_cache_size>0</uncompressed_cache_size>
     <listen_host>0.0.0.0</listen_host>
     <max_concurrent_queries>16</max_concurrent_queries>
+    <!-- Restored 2026-09-15: removing these let ClickHouse auto-scale its
+         background thread pools to defaults (BackgroundSchedulePoolSize=512
+         observed), which tracked with MemoryResident sitting at/above the
+         1200m cgroup limit and jemalloc.resident near 1.95 GB even though the
+         query-level MemoryTracking metric was only ~129 MB. That is
+         allocator/background overhead, not query load, and it is exactly the
+         OOM risk this file exists to prevent. -->
+    <background_pool_size>4</background_pool_size>
+    <background_schedule_pool_size>4</background_schedule_pool_size>
 
     <logger>
         <level>warning</level>
