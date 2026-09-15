@@ -1,5 +1,5 @@
 [project]
-name = "settlement-lakehouse"
+name = "settlement"
 version = "0.1.0"
 description = "Nigerian payments settlement reconciliation lakehouse"
 requires-python = ">=3.11"
