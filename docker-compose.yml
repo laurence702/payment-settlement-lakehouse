@@ -1,19 +1,27 @@
 # ---------------------------------------------------------------------------
 # payment-settlement-lakehouse: Airflow 3 on LocalExecutor, layered on top of
-# the shared platform.
+# a small self-contained data platform (postgres, redis, seaweedfs, kafka,
+# clickhouse) defined in this same file.
 #
-# The platform services are pulled in with `include:` rather than copy-pasted,
-# so Kafka/SeaweedFS/ClickHouse are defined in exactly one place. The shared repo
-# is a plain sibling directory (data-engineering-shared-infra), not a git
-# submodule: clone it separately next to this one (see Quickstart in the
-# README) and `make bootstrap` resolves INFRA_ROOT to it.
-#
-# Requires docker compose >= 2.20 for include:.
+# This platform layer started out shared with a sibling repo,
+# data-engineering-shared-infra, used across several practice projects. It is
+# vendored directly here now so this one repo runs end to end on its own: no
+# sibling clone, no second .env, no `include:`. data-engineering-shared-infra
+# still exists and still carries the full 9-service platform (this pipeline
+# never used timescaledb/prometheus/grafana/kafka-ui) for other projects; the
+# two copies of the 5 services this pipeline DOES use are not wired together,
+# so a config change made in one does not reach the other.
 # ---------------------------------------------------------------------------
 
-include:
-  - path: ${INFRA_ROOT}/docker-compose.yml
-    env_file: ${INFRA_ROOT}/.env
+x-restart: &restart
+  restart: unless-stopped
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
 
 x-airflow-common: &airflow-common
   image: ${AIRFLOW_IMAGE}
@@ -24,7 +32,6 @@ x-airflow-common: &airflow-common
       AIRFLOW_BASE_IMAGE: ${AIRFLOW_BASE_IMAGE}
   user: "${AIRFLOW_UID}:0"
   env_file:
-    - ${INFRA_ROOT}/.env
     - .env
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -84,6 +91,225 @@ x-airflow-common: &airflow-common
 
 services:
 
+  # ========================= PLATFORM ======================================
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    container_name: dp_postgres
+    profiles: [ "core" ]
+    <<: [*restart, *logging]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      # Keeps initdb fast and deterministic across recreates.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    ports:
+      - "${PORT_POSTGRES}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Long syntax, not `src:dst:ro`. PROJECT_ROOT contains a space ("Data
+      # Engineering"), and long syntax removes any ambiguity about how the
+      # short form is split.
+      - type: bind
+        source: ${PROJECT_ROOT}/init-scripts
+        target: /docker-entrypoint-initdb.d
+        read_only: true
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=96MB"
+      - "-c"
+      - "max_connections=80"
+    mem_limit: ${MEM_POSTGRES}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [data_network]
+
+  redis:
+    image: ${REDIS_IMAGE}
+    container_name: dp_redis
+    profiles: [ "core" ]
+    <<: [*restart, *logging]
+    ports:
+      - "${PORT_REDIS}:6379"
+    command: ["redis-server", "--save", "60", "1", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - redis_data:/data
+    mem_limit: ${MEM_REDIS}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [data_network]
+
+  # Object store. Was MinIO; see docs/adr/0005.
+  #
+  # One container, four components in one process: master (9333), volume
+  # (8080), filer (8888), S3 (8333). Upstream runs those as four services;
+  # on a 6 GB VM that trade is not close.
+  #
+  # Credentials come from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, which
+  # SeaweedFS turns into one static Admin identity, so .env stays the only
+  # file here holding a credential. Trade-off: no anonymous read on the marts
+  # bucket. Nothing used it; ADR 0005 says how to get it back.
+  seaweedfs:
+    image: ${SEAWEEDFS_IMAGE}
+    container_name: dp_seaweedfs
+    profiles: [ "core" ]
+    <<: [*restart, *logging]
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "${PORT_S3_API}:8333"
+      # Filer UI. The object browser MinIO's community console stopped shipping.
+      - "${PORT_S3_UI}:8888"
+    command:
+      - "server"
+      - "-dir=/data"
+      # Service name, not the container IP: survives a recreate.
+      - "-ip=seaweedfs"
+      - "-filer"
+      - "-s3"
+      - "-s3.port=8333"
+      # 256 MB volume files. The default is sized for a storage cluster.
+      - "-master.volumeSizeLimitMB=256"
+      - "-volume.max=32"
+      - "-metricsPort=9327"
+    volumes:
+      - seaweedfs_data:/data
+    mem_limit: ${MEM_S3}
+    networks: [data_network]
+
+  # Readiness gate + bucket layout, deliberately instead of a healthcheck on
+  # the server: probing from outside does not depend on which shell or client
+  # binaries the image happens to ship. Anything needing object storage should
+  # depends_on this with service_completed_successfully.
+  #
+  # Caveat: aws-cli v2 sends upload checksums by default and some
+  # S3-compatible servers reject them. create-bucket and ls are unaffected;
+  # do not assume `aws s3 cp` works here without testing it.
+  s3-init:
+    image: ${AWSCLI_IMAGE}
+    container_name: dp_s3_init
+    profiles: [ "core" ]
+    depends_on:
+      - seaweedfs
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      # SeaweedFS ignores the region; the CLI refuses to start without one.
+      AWS_DEFAULT_REGION: us-east-1
+      # Without this the CLI spends seconds looking for EC2 instance metadata
+      # that is never going to answer.
+      AWS_EC2_METADATA_DISABLED: "true"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        S3="aws --endpoint-url http://seaweedfs:8333"
+        for i in $$(seq 1 60); do
+          if $$S3 s3 ls >/dev/null 2>&1; then echo "s3 api reachable"; break; fi
+          echo "waiting for the s3 api ($$i/60)"; sleep 2
+        done
+        for b in lakehouse lakehouse-raw lakehouse-staged lakehouse-marts; do
+          $$S3 s3api create-bucket --bucket "$$b" >/dev/null 2>&1 || true
+          echo "bucket ready: $$b"
+        done
+        $$S3 s3 ls
+        echo "bucket layout ready"
+    networks: [data_network]
+
+  # KRaft. No Zookeeper: Kafka 4.x removed Zookeeper support entirely.
+  kafka:
+    image: ${KAFKA_IMAGE}
+    container_name: dp_kafka
+    profiles: [ "stream" ]
+    <<: [*restart, *logging]
+    ports:
+      - "${PORT_KAFKA}:9092"
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID}
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      # Two client listeners: INTERNAL for containers on data_network,
+      # EXTERNAL advertised as localhost for tools running on the host.
+      KAFKA_LISTENERS: INTERNAL://:19092,CONTROLLER://:9093,EXTERNAL://:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:19092,EXTERNAL://localhost:${PORT_KAFKA}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 48
+      KAFKA_HEAP_OPTS: ${MEM_KAFKA_HEAP}
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    mem_limit: ${MEM_KAFKA}
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:19092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks: [data_network]
+
+  clickhouse:
+    image: ${CLICKHOUSE_IMAGE}
+    container_name: dp_clickhouse
+    profiles: [ "warehouse" ]
+    <<: [*restart, *logging]
+    depends_on:
+      s3-init:
+        condition: service_completed_successfully
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+      # Read by config.d/s3.xml via from_env, so no secret is baked
+      # into a committed XML file.
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+    ports:
+      - "${PORT_CLICKHOUSE_HTTP}:8123"
+      # 9000 is taken by the S3 API on the host, so the native port is remapped.
+      - "${PORT_CLICKHOUSE_NATIVE}:9000"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - type: bind
+        source: ${PROJECT_ROOT}/config/clickhouse/config.d
+        target: /etc/clickhouse-server/config.d
+        read_only: true
+      - type: bind
+        source: ${PROJECT_ROOT}/config/clickhouse/users.d/limits.xml
+        target: /etc/clickhouse-server/users.d/limits.xml
+        read_only: true
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    mem_limit: ${MEM_CLICKHOUSE}
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user ${CLICKHOUSE_USER} --password ${CLICKHOUSE_PASSWORD} --query 'SELECT 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [data_network]
+
+  # ========================= AIRFLOW =======================================
   airflow-init:
     <<: *airflow-common
     container_name: np_airflow_init
@@ -172,8 +398,13 @@ services:
 
 volumes:
   airflow_logs:
+  postgres_data:
+  redis_data:
+  seaweedfs_data:
+  kafka_data:
+  clickhouse_data:
 
 networks:
   data_network:
-    name: shared_data_network
-    external: true
+    driver: bridge
+    name: naijapay_data_network

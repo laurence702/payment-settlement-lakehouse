@@ -29,21 +29,26 @@ grep -nE 'GENERATE_ME|_local_only' .env.example || true
 read -rp "History clean? [y/N] " ok; [ "$ok" = "y" ] || exit 1
 
 # ---------------------------------------------------------------------------
-# STEP 1 — the README tells readers to clone the sibling repo. If that repo
-# is private or missing, the quickstart is broken on arrival. Publish it first.
+# STEP 1 — optional. This repo no longer needs data-engineering-shared-infra
+# to run: its platform layer (postgres, redis, seaweedfs, kafka, clickhouse)
+# is vendored into this repo's own docker-compose.yml. The sibling repo is
+# still worth publishing on its own merits (it is used by other practice
+# projects and carries the full 9-service platform, including
+# timescaledb/prometheus/grafana/kafka-ui, which this repo never used), so
+# this step is left in rather than removed. Skip it with --skip-infra.
 # ---------------------------------------------------------------------------
-if [ -d "$INFRA/.git" ]; then
+if [ "${1:-}" != "--skip-infra" ] && [ -d "$INFRA/.git" ]; then
   ( cd "$INFRA"
     git remote get-url origin >/dev/null 2>&1 || \
       gh repo create "$OWNER/data-engineering-shared-infra" \
         --public --source=. --remote=origin --push \
-        --description "Local data platform for the payment-settlement-lakehouse pipeline. Postgres, Kafka (KRaft), ClickHouse, SeaweedFS, Redis, Prometheus and Grafana, every service behind a Compose profile with a memory limit, every image tag pinned in one place."
+        --description "Local data platform used across several data-engineering practice projects. Postgres, Kafka (KRaft), ClickHouse, SeaweedFS, Redis, Prometheus and Grafana, every service behind a Compose profile with a memory limit, every image tag pinned in one place."
     gh repo edit "$OWNER/data-engineering-shared-infra" \
       --add-topic docker-compose --add-topic kafka --add-topic clickhouse \
       --add-topic seaweedfs --add-topic data-engineering --add-topic local-development
   )
-else
-  echo "WARN: $INFRA has no git repo. The README's clone instruction will 404."
+elif [ "${1:-}" != "--skip-infra" ]; then
+  echo "WARN: $INFRA has no git repo here; skipping it (payment-settlement-lakehouse itself does not need it)."
 fi
 
 # ---------------------------------------------------------------------------
