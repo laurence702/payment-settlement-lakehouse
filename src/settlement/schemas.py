@@ -4,6 +4,7 @@ Deliberately hand-written rather than inferred. Schema inference over JSON is
 the reason so many "working" pipelines silently change a column's type the
 first week a null shows up in a new position.
 """
+
 from __future__ import annotations
 
 from typing import Final
@@ -94,6 +95,7 @@ MERCHANT_CATEGORIES: tuple[str, ...] = (
 # --- Arrow schemas ----------------------------------------------------------
 # Imported lazily so that pure-logic modules and their tests do not need
 # pyarrow installed.
+
 
 def transaction_event_schema():
     import pyarrow as pa
