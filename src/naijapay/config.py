@@ -4,6 +4,7 @@ Every module imports settings from here rather than calling os.getenv inline,
 so a missing variable fails once, loudly, at import time, instead of three
 tasks into a DAG run.
 """
+
 from __future__ import annotations
 
 import os
