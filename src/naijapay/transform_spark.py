@@ -72,17 +72,9 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
-    from pyarrow import fs as pafs
-
     s3 = _s3(settings)
     with contextlib.suppress(Exception):
         s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
-    with contextlib.suppress(Exception):
-        selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=True, allow_not_found=True)
-        for info in s3.get_file_info(selector):
-            if info.type == pafs.FileType.File:
-                with contextlib.suppress(Exception):
-                    s3.delete_file(info.path)
     n = 0
     for local in sorted(src_dir.rglob("*.parquet")):
         rel = local.relative_to(src_dir).as_posix()
