@@ -13,7 +13,7 @@ COMPOSE := docker compose --env-file .env
 ALL_PROFILES := core,stream,warehouse,airflow
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap verify-images preflight build up down stop ps mem logs demo \
+.PHONY: help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
         test test-fast test-spark test-dbt lint venv dag-trigger dag-logs \
         airflow-shell dbt-shell ch clean
 
@@ -65,6 +65,9 @@ up:  ## Start core + kafka + clickhouse + airflow. ~5.5 GB. See the budget in he
 
 demo:  ## Full end-to-end run: start everything, trigger the DAG, wait, report
 	@./scripts/demo.sh
+
+verify:  ## The done-check: full run + restart/OOM/row-count asserts. Exit 0 = pass. Evidence in verify-report/
+	@./scripts/verify.sh
 
 stop:  ## Stop everything, keep data
 	@COMPOSE_PROFILES=$(ALL_PROFILES) $(COMPOSE) stop

@@ -16,3 +16,6 @@ data/local/
 
 *.log
 .user.yml
+
+# make verify evidence
+verify-report/
