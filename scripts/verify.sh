@@ -10,6 +10,8 @@
 #
 # Evidence lands in verify-report/ (gitignored; CI uploads it as an artifact).
 # KEEP_UP=1 leaves the stack running afterwards for poking at.
+# FRESH=0 reuses existing volumes. The default starts from empty volumes so
+# that rows found in ClickHouse can only have come from this run.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -41,6 +43,14 @@ set -a; . ./.env; set +a
   done ) > "$REPORT/mem-samples.txt" 2>&1 &
 SAMPLER=$!
 trap 'kill $SAMPLER 2>/dev/null' EXIT
+
+if [ "${FRESH:-1}" = 1 ]; then
+  COMPOSE_PROFILES=core,stream,warehouse,airflow \
+    docker compose --env-file .env down -v --remove-orphans > "$REPORT/reset.log" 2>&1 || true
+  echo "state: fresh volumes" >> "$SUMMARY"
+else
+  echo "state: reused volumes (FRESH=0); row counts may include earlier runs" >> "$SUMMARY"
+fi
 
 # 1. the end-to-end run
 if ./scripts/demo.sh > "$REPORT/demo.log" 2>&1; then
@@ -92,6 +102,14 @@ if [[ "$rows" =~ ^[0-9]+$ ]] && [ "$rows" -gt 0 ]; then
   pass "mart_settlement_reconciliation has $rows rows"
 else
   bad "mart_settlement_reconciliation empty or unreadable (got '${rows}'; see $REPORT/clickhouse-err.txt)"
+fi
+
+# Task logs for the latest DAG run, copied out before teardown removes them.
+latest_run=$(docker exec np_airflow_scheduler sh -c \
+  'ls -1td /opt/airflow/logs/dag_id=naijapay_pipeline/run_id=* 2>/dev/null | head -1' 2>/dev/null || true)
+if [ -n "$latest_run" ]; then
+  docker cp "np_airflow_scheduler:$latest_run" "$REPORT/airflow-task-logs" > /dev/null 2>&1 \
+    && echo "- task logs: $REPORT/airflow-task-logs/" >> "$SUMMARY"
 fi
 
 docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}' > "$REPORT/mem-final.txt" 2>&1
