@@ -7,6 +7,7 @@
 #   2. no np_* container restarted or was OOM-killed during the run
 #   3. no one-shot init container exited non-zero
 #   4. mart_settlement_reconciliation has rows in ClickHouse
+#   5. settlement variance is zero for NGN and non-zero for some USD rows
 #
 # Evidence lands in verify-report/ (gitignored; CI uploads it as an artifact).
 # KEEP_UP=1 leaves the stack running afterwards for poking at.
@@ -102,6 +103,26 @@ if [[ "$rows" =~ ^[0-9]+$ ]] && [ "$rows" -gt 0 ]; then
   pass "mart_settlement_reconciliation has $rows rows"
 else
   bad "mart_settlement_reconciliation empty or unreadable (got '${rows}'; see $REPORT/clickhouse-err.txt)"
+fi
+
+# 5. the reconciliation says something true. NGN settles at the charged amount,
+# so its variance must be exactly zero; USD settles at a later FX rate, so a
+# run where every USD variance is zero means settlement FX is being reused.
+variance=$(docker exec np_clickhouse clickhouse-client \
+  --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --format TSV \
+  --query "SELECT
+             countIf(currency = 'NGN' AND is_settled AND settlement_variance_kobo != 0),
+             countIf(currency = 'USD' AND is_settled AND settlement_variance_kobo != 0)
+           FROM ${CLICKHOUSE_DB}.mart_settlement_reconciliation" 2>>"$REPORT/clickhouse-err.txt" || echo "")
+read -r ngn_off usd_drift <<< "${variance:-x x}"
+if [[ "$ngn_off" =~ ^[0-9]+$ ]] && [[ "$usd_drift" =~ ^[0-9]+$ ]]; then
+  if [ "$ngn_off" -eq 0 ] && [ "$usd_drift" -gt 0 ]; then
+    pass "variance: NGN settled rows all zero, $usd_drift USD settled rows show FX drift"
+  else
+    bad "variance: $ngn_off NGN settled rows non-zero (want 0), $usd_drift USD rows with FX drift (want > 0)"
+  fi
+else
+  bad "variance check could not read the mart (got '${variance}')"
 fi
 
 # Task logs for the latest DAG run, copied out before teardown removes them.
