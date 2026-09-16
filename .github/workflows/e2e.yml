@@ -4,8 +4,8 @@ name: e2e
 # The runner has more RAM than the 6 GB Colima VM, but mem_limit is enforced
 # per container by cgroups, so an OOM kill here is the same OOM kill there.
 #
-# This is the loop an agent iterates against: push to a branch, read
-# verify-report from the run's artifacts, fix, push again. Green = done.
+# Automated end-to-end verification: runs make verify, generates summary,
+# and publishes the verify-report artifact for test verification.
 on:
   workflow_dispatch:
   pull_request:
