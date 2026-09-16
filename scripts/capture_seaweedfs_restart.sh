@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # capture_seaweedfs_restart.sh
 #
-# Watches dp_seaweedfs's container StartedAt timestamp. The moment it
+# Watches np_seaweedfs's container StartedAt timestamp. The moment it
 # changes (i.e. the container restarted), snapshots docker inspect state,
 # docker events, raw docker logs, container stats, and Colima VM memory
 # and dmesg -- into one timestamped report file, no manual copy-paste.
@@ -19,7 +19,7 @@
 set -uo pipefail
 
 REPORT="seaweedfs_restart_capture_$(date +%Y%m%dT%H%M%S).log"
-CONTAINER="dp_seaweedfs"
+CONTAINER="np_seaweedfs"
 TIMEOUT_SECS="${1:-360}"
 SAMPLES_FILE="$(mktemp)"
 

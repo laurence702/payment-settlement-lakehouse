@@ -94,7 +94,7 @@ services:
   # ========================= PLATFORM ======================================
   postgres:
     image: ${POSTGRES_IMAGE}
-    container_name: dp_postgres
+    container_name: np_postgres
     profiles: [ "core" ]
     <<: [*restart, *logging]
     environment:
@@ -131,7 +131,7 @@ services:
 
   redis:
     image: ${REDIS_IMAGE}
-    container_name: dp_redis
+    container_name: np_redis
     profiles: [ "core" ]
     <<: [*restart, *logging]
     ports:
@@ -159,7 +159,7 @@ services:
   # bucket. Nothing used it; ADR 0005 says how to get it back.
   seaweedfs:
     image: ${SEAWEEDFS_IMAGE}
-    container_name: dp_seaweedfs
+    container_name: np_seaweedfs
     profiles: [ "core" ]
     <<: [*restart, *logging]
     environment:
@@ -196,7 +196,7 @@ services:
   # do not assume `aws s3 cp` works here without testing it.
   s3-init:
     image: ${AWSCLI_IMAGE}
-    container_name: dp_s3_init
+    container_name: np_s3_init
     profiles: [ "core" ]
     depends_on:
       - seaweedfs
@@ -228,7 +228,7 @@ services:
   # KRaft. No Zookeeper: Kafka 4.x removed Zookeeper support entirely.
   kafka:
     image: ${KAFKA_IMAGE}
-    container_name: dp_kafka
+    container_name: np_kafka
     profiles: [ "stream" ]
     <<: [*restart, *logging]
     ports:
@@ -267,7 +267,7 @@ services:
 
   clickhouse:
     image: ${CLICKHOUSE_IMAGE}
-    container_name: dp_clickhouse
+    container_name: np_clickhouse
     profiles: [ "warehouse" ]
     <<: [*restart, *logging]
     depends_on:

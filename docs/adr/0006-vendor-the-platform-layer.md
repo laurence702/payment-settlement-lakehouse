@@ -107,3 +107,37 @@ ADRs 0001 through 0005 still describe `INFRA_ROOT` and the two-repo layout in
 places. They are left alone on purpose, same rule 0005 states for the MinIO
 ADRs it supersedes: they record what was decided when it was decided. This
 ADR supersedes them on where the platform layer's definitions live.
+
+
+## Update, 2026-09-16: the container names still collided
+
+The network rename above (`naijapay_data_network`, not `shared_data_network`)
+was only half the isolation fix. Docker enforces container-name uniqueness
+host-wide, not per compose project, so keeping `dp_postgres` / `dp_redis` /
+`dp_seaweedfs` / `dp_s3_init` / `dp_kafka` / `dp_clickhouse` identical to
+`data-engineering-shared-infra`'s own compose file meant only one of the two
+stacks could ever have those containers running at a time. Whichever stack
+started first claimed the names; the other's `docker compose up` (or
+`--force-recreate`) failed with `Conflict. The container name "/dp_seaweedfs"
+is already in use by container "..."`.
+
+This surfaced in practice: `data-engineering-shared-infra`'s own
+`docker compose up -d --force-recreate clickhouse` failed because this repo's
+vendored `dp_seaweedfs` was already running under that name. That directly
+contradicts this ADR's stated goal ("a renamed network so the two stacks
+cannot collide if both are ever run at once") — the goal was right, the
+implementation only did half of it.
+
+Fixed by renaming all six vendored platform containers to the `np_` prefix
+already used by this repo's own Airflow containers (`np_postgres`,
+`np_redis`, `np_seaweedfs`, `np_s3_init`, `np_kafka`, `np_clickhouse`), in
+`docker-compose.yml`, `Makefile` (`ch` target, `ps` target's now-redundant
+second filter), `scripts/demo.sh`, `scripts/create-topics.sh`, and
+`scripts/capture_seaweedfs_restart.sh`. This repo's containers and
+`data-engineering-shared-infra`'s containers now use fully disjoint names, so
+the two stacks can run simultaneously without either one blocking the
+other's container creation. Not yet re-verified against a live Docker daemon
+past a YAML parse and `bash -n`/`make -n` check; anyone with a currently
+running `dp_*`-named stack from before this fix needs `make down` (or
+`docker compose down`) once to remove the old containers before `make up`
+creates the new `np_*`-named ones.

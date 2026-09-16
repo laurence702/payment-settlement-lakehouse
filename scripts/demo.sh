@@ -72,7 +72,7 @@ for i in $(seq 1 120); do
 done
 
 step "what landed in ClickHouse"
-docker exec dp_clickhouse clickhouse-client \
+docker exec np_clickhouse clickhouse-client \
   --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --multiquery <<SQL
 SELECT table, formatReadableQuantity(sum(rows)) AS rows
 FROM system.parts WHERE database = '${CLICKHOUSE_DB}' AND active

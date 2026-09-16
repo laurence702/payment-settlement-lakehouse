@@ -8,10 +8,10 @@ B=localhost:19092
 
 for spec in "naijapay.transactions.v1:6" "naijapay.settlements.v1:3"; do
   topic="${spec%%:*}"; parts="${spec##*:}"
-  if docker exec dp_kafka $K --bootstrap-server $B --list | grep -qx "$topic"; then
+  if docker exec np_kafka $K --bootstrap-server $B --list | grep -qx "$topic"; then
     echo "  exists  $topic"
   else
-    docker exec dp_kafka $K --bootstrap-server $B --create \
+    docker exec np_kafka $K --bootstrap-server $B --create \
       --topic "$topic" --partitions "$parts" --replication-factor 1 \
       --config retention.ms=172800000 --config compression.type=lz4
     echo "  created $topic ($parts partitions)"
