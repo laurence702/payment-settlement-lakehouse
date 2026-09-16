@@ -167,6 +167,9 @@ def naijapay_pipeline():
             "DBT_DUCKDB_PATH": "/tmp/naijapay.duckdb",
             "DBT_LOG_PATH": "/tmp/dbt-logs",
             "DBT_TARGET_PATH": "/tmp/dbt-target",
+            "S3_ENDPOINT": "{{ var.value.get('s3_endpoint', 'seaweedfs:8333') }}",
+            "S3_ACCESS_KEY": "{{ var.value.get('s3_access_key', 'dataeng') }}",
+            "S3_SECRET_KEY": "{{ var.value.get('s3_secret_key', 'dataeng_local_only') }}",
         },
         append_env=True,
     )
