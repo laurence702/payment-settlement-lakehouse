@@ -22,6 +22,7 @@ Two decisions worth defending:
     several seconds wide, where a dashboard renders zeroes. That window is how
     you get asked why revenue went to zero at 3am.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -91,11 +92,7 @@ def _s3_expr(settings: Settings, parquet: str) -> str:
     The collection carries the endpoint and credentials, so no access key ever
     appears in a query, a log line, or this repository.
     """
-    return (
-        f"s3(s3_lakehouse, "
-        f"filename = '{settings.bucket_marts}/{parquet}', "
-        f"format = 'Parquet')"
-    )
+    return f"s3(s3_lakehouse, filename = '{settings.bucket_marts}/{parquet}', format = 'Parquet')"
 
 
 def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
@@ -125,8 +122,7 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
 
     exists = int(
         client.command(
-            f"SELECT count() FROM system.tables "
-            f"WHERE database = '{db}' AND name = '{spec.name}'"
+            f"SELECT count() FROM system.tables WHERE database = '{db}' AND name = '{spec.name}'"
         )
     )
     if exists:
