@@ -6,6 +6,7 @@ shaped exactly like production.
 
 Marked slow because it starts a JVM to produce its input.
 """
+
 from __future__ import annotations
 
 import json
@@ -55,12 +56,18 @@ def dbt_run(staged_dir, tmp_path_factory):
     dbt_bin = _dbt_bin()
     result = subprocess.run(
         [
-            dbt_bin, "build",
-            "--profiles-dir", str(PROJECT_DIR),
-            "--project-dir", str(PROJECT_DIR),
-            "--target", "localfs",
-            "--target-path", str(target),
-            "--vars", json.dumps(variables),
+            dbt_bin,
+            "build",
+            "--profiles-dir",
+            str(PROJECT_DIR),
+            "--project-dir",
+            str(PROJECT_DIR),
+            "--target",
+            "localfs",
+            "--target-path",
+            str(target),
+            "--vars",
+            json.dumps(variables),
             "--no-use-colors",
         ],
         capture_output=True,
@@ -95,9 +102,9 @@ def test_reconciliation_grain_and_buckets(dbt_run):
     ).fetchone()
     assert total == distinct, "reconciliation mart is not one row per transaction"
 
-    buckets = dict(con.execute(
-        f"select reconciliation_bucket, count(*) from '{p}' group by 1"
-    ).fetchall())
+    buckets = dict(
+        con.execute(f"select reconciliation_bucket, count(*) from '{p}' group by 1").fetchall()
+    )
     assert "settled" in buckets
     assert sum(v for k, v in buckets.items() if k != "settled") > 0, (
         "every transaction settled; the unsettled gap vanished"
@@ -107,10 +114,14 @@ def test_reconciliation_grain_and_buckets(dbt_run):
 def test_settled_rows_carry_no_outstanding_balance(dbt_run):
     duckdb = pytest.importorskip("duckdb")
     marts, _ = dbt_run
-    n = duckdb.connect().execute(
-        f"select count(*) from '{marts}/mart_settlement_reconciliation.parquet' "
-        "where is_settled and outstanding_net_kobo != 0"
-    ).fetchone()[0]
+    n = (
+        duckdb.connect()
+        .execute(
+            f"select count(*) from '{marts}/mart_settlement_reconciliation.parquet' "
+            "where is_settled and outstanding_net_kobo != 0"
+        )
+        .fetchone()[0]
+    )
     assert n == 0
 
 
@@ -133,7 +144,5 @@ def test_merchant_daily_attempts_tie_back_to_the_fact_table(dbt_run):
     daily = con.execute(
         f"select sum(attempts) from '{marts}/mart_merchant_daily.parquet'"
     ).fetchone()[0]
-    fact = con.execute(
-        f"select count(*) from '{marts}/fct_transactions.parquet'"
-    ).fetchone()[0]
+    fact = con.execute(f"select count(*) from '{marts}/fct_transactions.parquet'").fetchone()[0]
     assert daily == fact, "daily aggregate does not tie back to the fact table"
