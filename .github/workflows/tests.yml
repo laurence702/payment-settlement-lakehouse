@@ -45,7 +45,12 @@ jobs:
 
       # Builds every dbt model and runs every dbt test against local Parquet
       # produced by the real Spark job, not a stand-in for it.
+      # No DBT_BIN override here on purpose: _dbt_bin() in tests/test_dbt.py
+      # treats DBT_BIN as a literal path via Path(...).exists(), not a PATH
+      # lookup. Setting it to the bare name "dbt" matched this repo's own
+      # top-level dbt/ directory and made subprocess.run() try to execve() a
+      # directory, which fails with PermissionError. Leaving it unset falls
+      # through to shutil.which("dbt"), which correctly resolves the
+      # pip-installed console script.
       - name: dbt build and test
-        env:
-          DBT_BIN: dbt
         run: pytest -m slow tests/test_dbt.py
