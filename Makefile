@@ -73,7 +73,7 @@ down:  ## Remove containers, keep volumes
 	@COMPOSE_PROFILES=$(ALL_PROFILES) $(COMPOSE) down --remove-orphans
 
 ps:  ## What is running
-	@docker ps --filter "name=np_" --filter "name=dp_" \
+	@docker ps --filter "name=np_" \
 	  --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 
 mem:  ## Memory use against the 6 GB budget
@@ -98,7 +98,7 @@ dbt-shell:  ## dbt CLI inside the container, against the object store
 	  /home/airflow/dbt-venv/bin/dbt $(ARGS)
 
 ch:  ## clickhouse-client shell
-	@docker exec -it dp_clickhouse clickhouse-client \
+	@docker exec -it np_clickhouse clickhouse-client \
 	  --user $$(grep '^CLICKHOUSE_USER=' .env | cut -d= -f2) \
 	  --password $$(grep '^CLICKHOUSE_PASSWORD=' .env | cut -d= -f2)
 
