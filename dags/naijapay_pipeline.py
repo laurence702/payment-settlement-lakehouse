@@ -49,7 +49,7 @@ def naijapay_pipeline():
 
     @task
     def preflight() -> dict:
-        """Fail in five seconds instead of eight minutes into a Spark job."""
+        """Verify network connectivity to Kafka, S3, and ClickHouse before pipeline execution."""
         import socket
 
         from naijapay.config import get_settings
