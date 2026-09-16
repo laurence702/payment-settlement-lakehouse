@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -37,15 +38,15 @@ def raw_dir(tmp_path_factory, events) -> Path:
 def raw_parquet_dir(tmp_path_factory, events) -> Path:
     """Raw events as Parquet, matching what the ingest task writes to the object store."""
     pa = pytest.importorskip("pyarrow")
+    from datetime import datetime
+
     import pyarrow.parquet as pq
 
     from naijapay.schemas import settlement_event_schema, transaction_event_schema
 
-    from datetime import datetime, timezone
-
     tx, stl = events
     d = tmp_path_factory.mktemp("raw_parquet")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     def coerce(rows, schema):
         out = []
