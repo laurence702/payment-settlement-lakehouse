@@ -63,7 +63,8 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
     for info in s3.get_file_info(selector):
         if info.type != pafs.FileType.File or not info.path.endswith(".parquet"):
             continue
-        local = dest / f"{n:05d}_{Path(info.path).name}"
+        safe_name = info.path.replace("/", "_")
+        local = dest / f"{n:05d}_{safe_name}"
         with s3.open_input_stream(info.path) as src, local.open("wb") as out:
             shutil.copyfileobj(src, out)
         n += 1
@@ -71,9 +72,17 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
+    from pyarrow import fs as pafs
+
     s3 = _s3(settings)
     with contextlib.suppress(Exception):
         s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
+    with contextlib.suppress(Exception):
+        selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=True, allow_not_found=True)
+        for info in s3.get_file_info(selector):
+            if info.type == pafs.FileType.File:
+                with contextlib.suppress(Exception):
+                    s3.delete_file(info.path)
     n = 0
     for local in sorted(src_dir.rglob("*.parquet")):
         rel = local.relative_to(src_dir).as_posix()
@@ -117,8 +126,8 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
     raw = spark.read.parquet(in_dir.as_posix())
     raw_count = raw.count()
 
-    # 1. Drop exact redeliveries. event_id is the producer's idempotency key.
-    deduped = raw.dropDuplicates(["event_id"])
+    # 1. Drop exact redeliveries per transaction. event_id is the producer's idempotency key.
+    deduped = raw.dropDuplicates(["transaction_ref", "event_id"])
     after_dedupe = deduped.count()
 
     # 2. Collapse the event stream to one row per transaction, latest wins.
@@ -183,7 +192,7 @@ def transform_settlements(spark, in_dir: Path, out_dir: Path) -> dict:
 
     raw = spark.read.parquet(in_dir.as_posix())
     raw_count = raw.count()
-    staged = raw.dropDuplicates(["event_id"]).withColumn(
+    staged = raw.dropDuplicates(["settlement_id", "transaction_ref"]).withColumn(
         "processed_at", F.lit(datetime.now(UTC)).cast("timestamp")
     )
     out_count = staged.count()
