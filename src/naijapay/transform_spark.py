@@ -25,15 +25,15 @@ What this stage actually fixes:
     updated_at, with a deterministic status-rank tiebreak so a rerun on the same
     input produces byte-identical output.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-UTC = timezone.utc
 
 from naijapay.config import Settings, get_settings
 from naijapay.schemas import STATUS_RANK
@@ -72,10 +72,8 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
     s3 = _s3(settings)
-    try:
+    with contextlib.suppress(Exception):
         s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
-    except Exception:
-        pass
     n = 0
     for local in sorted(src_dir.rglob("*.parquet")):
         rel = local.relative_to(src_dir).as_posix()
@@ -127,19 +125,13 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
     #    The status_rank tiebreak makes this deterministic when two events for
     #    one reference share an updated_at, which happens when a producer emits
     #    a pending and a terminal status inside the same clock tick.
-    rank_expr = F.create_map(
-        *[x for k, v in STATUS_RANK.items() for x in (F.lit(k), F.lit(v))]
-    )
+    rank_expr = F.create_map(*[x for k, v in STATUS_RANK.items() for x in (F.lit(k), F.lit(v))])
     ranked = deduped.withColumn("status_rank", rank_expr[F.col("status")])
 
     w = Window.partitionBy("transaction_ref").orderBy(
         F.col("updated_at").desc(), F.col("status_rank").desc(), F.col("event_id").desc()
     )
-    latest = (
-        ranked.withColumn("_rn", F.row_number().over(w))
-        .filter(F.col("_rn") == 1)
-        .drop("_rn")
-    )
+    latest = ranked.withColumn("_rn", F.row_number().over(w)).filter(F.col("_rn") == 1).drop("_rn")
 
     # 3. Derived columns the marts need and should not each recompute.
     staged = (
@@ -147,7 +139,9 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
             "amount_ngn_kobo",
             F.when(
                 F.col("currency") == "USD",
-                (F.col("amount_kobo") * F.coalesce(F.col("fx_rate_to_ngn"), F.lit(0.0))).cast("long"),
+                (F.col("amount_kobo") * F.coalesce(F.col("fx_rate_to_ngn"), F.lit(0.0))).cast(
+                    "long"
+                ),
             ).otherwise(F.col("amount_kobo")),
         )
         .withColumn(
@@ -189,9 +183,8 @@ def transform_settlements(spark, in_dir: Path, out_dir: Path) -> dict:
 
     raw = spark.read.parquet(in_dir.as_posix())
     raw_count = raw.count()
-    staged = (
-        raw.dropDuplicates(["event_id"])
-        .withColumn("processed_at", F.lit(datetime.now(UTC)).cast("timestamp"))
+    staged = raw.dropDuplicates(["event_id"]).withColumn(
+        "processed_at", F.lit(datetime.now(UTC)).cast("timestamp")
     )
     out_count = staged.count()
     staged.repartition("settlement_date").write.mode("overwrite").partitionBy(

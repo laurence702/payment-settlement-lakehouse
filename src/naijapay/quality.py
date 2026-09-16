@@ -9,6 +9,7 @@ Each check returns a (passed, detail) pair. The task fails on any hard failure
 and warns on soft ones, so a rounding drift does not page anyone but a missing
 table does.
 """
+
 from __future__ import annotations
 
 from naijapay.config import Settings, get_settings
@@ -49,9 +50,7 @@ def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:
 
     # 4. Reconciliation totals must tie back to the transaction fact. If these
     #    disagree, one of the two loads is stale and the dashboard is lying.
-    recon_success = int(
-        client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation")
-    )
+    recon_success = int(client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation"))
     fct_success = int(
         client.command(f"SELECT count() FROM {db}.fct_transactions WHERE is_settlement_eligible")
     )
