@@ -45,12 +45,13 @@ assumption in the PR, and keep going.
 
 ## Rules
 
+- **Production-ready code comments and docstrings.** All comments, docstrings, and documentation must be clean, senior-engineer production quality. No comments suggesting work-in-progress, debugging relics, temporary hacks, or conversational/AI self-narration.
+- **Commit at natural breakpoints at regular intervals.** Structure changes into logical, incremental commits (e.g. schemas/models -> core logic -> tests -> configuration/docs) with concise, professional messages explaining *why*. Never dump an entire finished project or multi-feature codebase in a single massive commit.
 - If you raise one `MEM_*`, lower another, and update the budget table in
   `.env.example` and ADR 0003 in the same commit.
 - Pin versions. No `latest` tags.
 - Money is integer kobo end to end. Never floats.
 - Every change to a `src/` module comes with a test in `tests/`.
-- Commit at natural breakpoints with a message that says why, not what.
 
 ## Open issue (as of 2026-09-16)
 
