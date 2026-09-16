@@ -15,13 +15,12 @@ Design decisions worth defending in an interview:
   malformed rows. Cleaning here would destroy the evidence you need when a
   number looks wrong three weeks later.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
+from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -157,10 +156,8 @@ def drain_topic(
                 consumer.commit(asynchronous=False)
             except Exception as exc:
                 from confluent_kafka import KafkaError, KafkaException
-                if (
-                    isinstance(exc, KafkaException)
-                    and exc.args[0].code() == KafkaError._NO_OFFSET
-                ):
+
+                if isinstance(exc, KafkaException) and exc.args[0].code() == KafkaError._NO_OFFSET:
                     pass
                 else:
                     raise

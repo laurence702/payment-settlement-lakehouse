@@ -9,11 +9,12 @@ Scheduling note: this DAG is manual-trigger by default. A local laptop stack
 that wakes up hourly to churn a 6 GB VM is a laptop with no battery. Set a
 schedule when it runs somewhere that is meant to be always on.
 """
+
 from __future__ import annotations
 
 import pendulum
-from airflow.sdk import dag, task
 from airflow.providers.standard.operators.bash import BashOperator
+from airflow.sdk import dag, task
 
 DEFAULT_ARGS = {
     "owner": "data-platform",
@@ -49,7 +50,7 @@ def naijapay_pipeline():
 
     @task
     def preflight() -> dict:
-        """Fail in five seconds instead of eight minutes into a Spark job."""
+        """Verify network connectivity to Kafka, S3, and ClickHouse before pipeline execution."""
         import socket
 
         from naijapay.config import get_settings

@@ -9,6 +9,7 @@ Each check returns a (passed, detail) pair. The task fails on any hard failure
 and warns on soft ones, so a rounding drift does not page anyone but a missing
 table does.
 """
+
 from __future__ import annotations
 
 from naijapay.config import Settings, get_settings
@@ -49,9 +50,7 @@ def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:
 
     # 4. Reconciliation totals must tie back to the transaction fact. If these
     #    disagree, one of the two loads is stale and the dashboard is lying.
-    recon_success = int(
-        client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation")
-    )
+    recon_success = int(client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation"))
     fct_success = int(
         client.command(f"SELECT count() FROM {db}.fct_transactions WHERE is_settlement_eligible")
     )
@@ -64,25 +63,61 @@ def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:
             }
         )
 
-    # 5. Soft: FX rounding drift. Converting USD kobo at an FX rate and casting
-    #    to an integer loses sub-kobo amounts, so a small non-zero variance is
-    #    expected and correct. A LARGE one is a pricing bug.
-    variance = client.command(
-        f"SELECT sum(abs(settlement_variance_kobo)), count() "
-        f"FROM {db}.mart_settlement_reconciliation WHERE is_settled"
+    # 5a. Hard: an NGN settlement never touches an FX rate, so its variance
+    #     must be exactly zero. Any non-zero value here is a pricing bug, full
+    #     stop, regardless of size.
+    ngn_bad = int(
+        client.command(
+            f"SELECT count() FROM {db}.mart_settlement_reconciliation "
+            f"WHERE is_settled AND currency = 'NGN' AND settlement_variance_kobo != 0"
+        )
     )
-    total_var, settled_n = (int(variance[0] or 0), int(variance[1] or 0))
-    if settled_n:
-        per_row = total_var / settled_n
-        if per_row > 100:  # more than 1 naira average drift is not rounding
-            hard.append({"check": "settlement_variance", "avg_kobo_per_row": per_row})
-        elif total_var:
+    if ngn_bad:
+        hard.append({"check": "ngn_settlement_variance_nonzero", "rows": ngn_bad})
+
+    # 5b. USD settlement FX drift. generate.py samples both the charge-time
+    #     and settlement-time rate independently from
+    #     NGN_PER_USD * rng.uniform(0.985, 1.015), so a settled USD row is
+    #     expected to carry real, amount-proportional variance now, not just
+    #     sub-kobo rounding noise. Two independent draws from that range bound
+    #     the theoretical worst case at 1.015/0.985 - 1 ~= 3.05% of the row's
+    #     gross amount; 5% leaves headroom for legitimate noise while still
+    #     catching an actual pricing or currency bug, which would blow well
+    #     past that band.
+    FX_DRIFT_HARD_LIMIT = 0.05
+    usd_variance = client.command(
+        f"SELECT "
+        f"  countIf(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo) > {FX_DRIFT_HARD_LIMIT}), "
+        f"  max(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
+        f"  avg(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
+        f"  count() "
+        f"FROM {db}.mart_settlement_reconciliation "
+        f"WHERE is_settled AND currency = 'USD' AND (amount_ngn_kobo - fee_ngn_kobo) != 0"
+    )
+    over_limit, max_ratio, avg_ratio, usd_n = (
+        int(usd_variance[0] or 0),
+        float(usd_variance[1] or 0),
+        float(usd_variance[2] or 0),
+        int(usd_variance[3] or 0),
+    )
+    if usd_n:
+        if over_limit:
+            hard.append(
+                {
+                    "check": "usd_settlement_fx_drift",
+                    "rows_over_limit": over_limit,
+                    "max_ratio": round(max_ratio, 4),
+                    "limit": FX_DRIFT_HARD_LIMIT,
+                }
+            )
+        elif max_ratio:
             soft.append(
                 {
-                    "check": "settlement_variance",
-                    "total_kobo": total_var,
-                    "avg_kobo_per_row": round(per_row, 4),
-                    "note": "expected FX integer-truncation drift, not a defect",
+                    "check": "usd_settlement_fx_drift",
+                    "settled_usd_rows": usd_n,
+                    "avg_ratio": round(avg_ratio, 4),
+                    "max_ratio": round(max_ratio, 4),
+                    "note": "expected settlement-time FX drift, not a defect",
                 }
             )
 

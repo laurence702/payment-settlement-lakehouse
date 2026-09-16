@@ -15,16 +15,16 @@ that a clean synthetic dataset would hide:
 Everything here is stdlib only and seeded, so the tests can assert on exact
 counts without Kafka, pyarrow, or a network.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
-
-UTC = timezone.utc
+from datetime import UTC, date, datetime, timedelta
 
 from naijapay.schemas import (
     BANKS,
@@ -38,19 +38,19 @@ from naijapay.schemas import (
 # Per-channel behaviour, loosely modelled on published Nigerian PSP figures:
 # USSD and QR fail more than card, bank transfer is slowest to confirm.
 CHANNEL_PROFILE: dict[str, dict[str, float]] = {
-    Channel.CARD:          {"weight": 0.46, "success": 0.88, "confirm_secs": 12},
+    Channel.CARD: {"weight": 0.46, "success": 0.88, "confirm_secs": 12},
     Channel.BANK_TRANSFER: {"weight": 0.31, "success": 0.94, "confirm_secs": 90},
-    Channel.USSD:          {"weight": 0.15, "success": 0.79, "confirm_secs": 45},
-    Channel.QR:            {"weight": 0.08, "success": 0.83, "confirm_secs": 20},
+    Channel.USSD: {"weight": 0.15, "success": 0.79, "confirm_secs": 45},
+    Channel.QR: {"weight": 0.08, "success": 0.83, "confirm_secs": 20},
 }
 
-DUPLICATE_RATE = 0.02       # at-least-once redelivery
-OUT_OF_ORDER_RATE = 0.05    # terminal event overtakes its own pending event
-REVERSAL_RATE = 0.012       # success later reversed (chargeback / failed payout)
-UNSETTLED_RATE = 0.031      # successful but never settled: the reconciliation gap
-USD_RATE = 0.04             # share of card charges denominated in USD
+DUPLICATE_RATE = 0.02  # at-least-once redelivery
+OUT_OF_ORDER_RATE = 0.05  # terminal event overtakes its own pending event
+REVERSAL_RATE = 0.012  # success later reversed (chargeback / failed payout)
+UNSETTLED_RATE = 0.031  # successful but never settled: the reconciliation gap
+USD_RATE = 0.04  # share of card charges denominated in USD
 
-NGN_PER_USD = 1_615.0       # static on purpose; a real pipeline joins an fx table
+NGN_PER_USD = 1_615.0  # static on purpose; a real pipeline joins an fx table
 
 
 @dataclass(frozen=True)
@@ -92,9 +92,14 @@ def _amount_kobo(rng: random.Random, category: str) -> int:
     percentile metric downstream meaningless.
     """
     base = {
-        "utilities": 8.4, "food_delivery": 8.2, "digital_services": 8.0,
-        "ecommerce": 9.2, "logistics": 8.6, "education": 10.4,
-        "travel": 10.8, "healthcare": 9.6,
+        "utilities": 8.4,
+        "food_delivery": 8.2,
+        "digital_services": 8.0,
+        "ecommerce": 9.2,
+        "logistics": 8.6,
+        "education": 10.4,
+        "travel": 10.8,
+        "healthcare": 9.6,
     }.get(category, 9.0)
     naira = rng.lognormvariate(base, 0.85)
     return int(min(max(naira, 100.0), 8_000_000.0) * 100)
@@ -142,7 +147,32 @@ def generate_events(
         day_offset = rng.uniform(0, days)
         hour_bias = rng.choices(
             range(24),
-            weights=[1, 1, 1, 1, 1, 2, 4, 7, 9, 10, 11, 12, 13, 13, 12, 12, 13, 15, 16, 14, 11, 7, 4, 2],
+            weights=[
+                1,
+                1,
+                1,
+                1,
+                1,
+                2,
+                4,
+                7,
+                9,
+                10,
+                11,
+                12,
+                13,
+                13,
+                12,
+                12,
+                13,
+                15,
+                16,
+                14,
+                11,
+                7,
+                4,
+                2,
+            ],
             k=1,
         )[0]
         created = window_start + timedelta(
@@ -163,23 +193,38 @@ def generate_events(
         gateway = rng.choice(Gateway.ALL)
         customer = f"CUS_{rng.randrange(10**6):06d}"
 
-        def base_event(status: str, ts: datetime, reason: str | None = None) -> dict:
+        def base_event(
+            status: str,
+            ts: datetime,
+            reason: str | None = None,
+            _ref: str = ref,
+            _merchant_id: str = merchant.merchant_id,
+            _customer: str = customer,
+            _gateway: str = gateway,
+            _channel: str = channel,
+            _bank: str | None = bank,
+            _amount: int = amount,
+            _fee: int = fee,
+            _currency: str = currency,
+            _fx: float | None = fx,
+            _created: datetime = created,
+        ) -> dict:
             return {
                 "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
                 "event_ts": ts.isoformat(),
-                "transaction_ref": ref,
-                "merchant_id": merchant.merchant_id,
-                "customer_id": customer,
-                "gateway": gateway,
-                "channel": channel,
-                "bank_code": bank,
+                "transaction_ref": _ref,
+                "merchant_id": _merchant_id,
+                "customer_id": _customer,
+                "gateway": _gateway,
+                "channel": _channel,
+                "bank_code": _bank,
                 "status": status,
-                "amount_kobo": amount,
-                "fee_kobo": fee,
-                "currency": currency,
-                "fx_rate_to_ngn": fx,
+                "amount_kobo": _amount,
+                "fee_kobo": _fee,
+                "currency": _currency,
+                "fx_rate_to_ngn": _fx,
                 "failure_reason": reason,
-                "created_at": created.isoformat(),
+                "created_at": _created.isoformat(),
                 "updated_at": ts.isoformat(),
             }
 
@@ -188,9 +233,7 @@ def generate_events(
 
         # 2. terminal
         settled_ok = rng.random() < profile["success"]
-        confirm = created + timedelta(
-            seconds=profile["confirm_secs"] * rng.uniform(0.4, 3.0)
-        )
+        confirm = created + timedelta(seconds=profile["confirm_secs"] * rng.uniform(0.4, 3.0))
         if settled_ok:
             terminal = base_event(Status.SUCCESS, confirm)
         else:
@@ -217,9 +260,9 @@ def generate_events(
         #    into the unsettled gap
         if settled_ok and not reversed_later and rng.random() > UNSETTLED_RATE:
             sdate = (confirm + timedelta(days=merchant.settlement_lag_days)).date()
-            settled_at = datetime.combine(
-                sdate, datetime.min.time(), tzinfo=UTC
-            ) + timedelta(hours=rng.uniform(9, 17))
+            settled_at = datetime.combine(sdate, datetime.min.time(), tzinfo=UTC) + timedelta(
+                hours=rng.uniform(9, 17)
+            )
             # Re-sample the FX rate at settlement time rather than reusing the
             # charge-time `fx`. Settlement lands days after the charge, and a
             # real PSP settles at whatever rate is current then, not the rate
@@ -227,9 +270,7 @@ def generate_events(
             # provably zero for every row (both sides truncated the identical
             # amount * fx product) instead of the small, real drift the mart and
             # quality.py's soft check both expect and are built to tolerate.
-            settlement_fx = (
-                NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
-            )
+            settlement_fx = NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
             gross = amount if currency == "NGN" else int(amount * settlement_fx)
             gross_fee = fee if currency == "NGN" else int(fee * settlement_fx)
             settlements.append(
@@ -309,10 +350,8 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
                 # Guard with its own try/except: poll() itself can raise
                 # BufferError when the queue is still saturated, which would
                 # otherwise escape the retry loop.
-                try:
+                with contextlib.suppress(BufferError):
                     producer.poll(0.5)
-                except BufferError:
-                    pass
         # Poll every 100 messages (not 1000) to keep the in-flight window
         # drained and avoid hitting queue limits mid-batch.
         if i % 100 == 0:

@@ -16,3 +16,8 @@ data/local/
 
 *.log
 .user.yml
+*.bak
+HANDOVER.md
+
+# make verify evidence
+verify-report/
