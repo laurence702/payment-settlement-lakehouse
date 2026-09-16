@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# The done-check. One command that answers "does the pipeline work?" with an
-# exit code, and leaves the evidence on disk so nobody has to copy logs into a
-# chat to find out why it didn't.
+# Verification check. Validates full pipeline operation with an exit code
+# and records structured execution evidence to disk.
 #
 # PASS means all of:
 #   1. scripts/demo.sh exits 0 (stack up, DAG run succeeded)
