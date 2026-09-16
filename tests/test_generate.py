@@ -1,5 +1,6 @@
 """The generator is the source of truth for every downstream test, so its
 pathologies have to be asserted, not assumed."""
+
 from __future__ import annotations
 
 import collections

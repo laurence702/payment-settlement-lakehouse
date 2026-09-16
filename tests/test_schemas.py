@@ -28,7 +28,7 @@ def test_reversed_outranks_success():
 
 def test_terminal_statuses_exclude_pending():
     assert Status.PENDING not in TERMINAL_STATUSES
-    assert TERMINAL_STATUSES == {Status.SUCCESS, Status.FAILED, Status.REVERSED}
+    assert {Status.SUCCESS, Status.FAILED, Status.REVERSED} == TERMINAL_STATUSES
 
 
 def test_bank_codes_are_unique_and_stringy():

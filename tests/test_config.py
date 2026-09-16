@@ -7,6 +7,7 @@ every test still green. This covers the seam that swap ran through.
 No Docker, no network, no object store. Just the contract everything
 downstream reads.
 """
+
 from __future__ import annotations
 
 import pytest
