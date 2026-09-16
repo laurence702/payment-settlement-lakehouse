@@ -45,13 +45,15 @@ assumption in the PR, and keep going.
 
 ## Rules
 
+- **Sole user attribution on all commits and PRs.** Only Laurence's credentials (`laurence702 <akaigbokwelaurence@gmail.com>`) must appear as author and committer. Never include `Co-Authored-By`, `Claude-Session`, AI signatures, or AI trailers in commit messages, PR descriptions, or git tags.
+- **Production-ready code comments and docstrings.** All comments, docstrings, and documentation must be clean, senior-engineer production quality. No comments suggesting work-in-progress, debugging relics, temporary hacks, or conversational/AI self-narration.
+- **Commit at natural breakpoints at regular intervals.** Structure changes into logical, human-like incremental commits (e.g. schemas/models -> core logic -> tests -> configuration/docs) with concise, professional messages explaining *why*. Never dump an entire finished project or multi-feature codebase in a single massive commit.
 - If you raise one `MEM_*`, lower another, and update the budget table in
   `.env.example` and ADR 0003 in the same commit.
 - Pin versions. No `latest` tags.
 - Money is integer kobo end to end. Never floats.
 - Every change to a `src/` module comes with a test in `tests/`.
 - Do not edit `HANDOVER.md` as a status report. It is a narrative writeup.
-- Commit at natural breakpoints with a message that says why, not what.
 
 ## Open issue (as of 2026-09-16)
 
