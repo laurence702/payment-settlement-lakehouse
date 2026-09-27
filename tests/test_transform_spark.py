@@ -113,7 +113,11 @@ def test_staged_transactions_expose_expected_settlement_dates(spark, raw_parquet
 
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "out")
     rows = spark.read.parquet((tmp_path / "out").as_posix()).select(
-        "settlement_lag_days", "expected_settlement_date", "settlement_source_watermark_at"
+        "status",
+        "settlement_lag_days",
+        "expected_settlement_date",
+        "settlement_source_watermark_at",
+        "successful_at",
     )
     assert rows.filter("settlement_lag_days not in (1, 2)").count() == 0
     assert (
@@ -122,6 +126,7 @@ def test_staged_transactions_expose_expected_settlement_dates(spark, raw_parquet
         ).count()
         == 0
     )
+    assert rows.filter("status in ('success', 'reversed') and successful_at is null").count() == 0
 
 
 def test_output_is_reproducible(spark, raw_parquet_dir, tmp_path):
