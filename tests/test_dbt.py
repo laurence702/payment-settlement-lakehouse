@@ -111,14 +111,14 @@ def test_reconciliation_grain_and_buckets(dbt_run):
     )
 
 
-def test_settled_rows_carry_no_outstanding_balance(dbt_run):
+def test_amount_matched_rows_carry_no_outstanding_balance(dbt_run):
     duckdb = pytest.importorskip("duckdb")
     marts, _ = dbt_run
     n = (
         duckdb.connect()
         .execute(
             f"select count(*) from '{marts}/mart_settlement_reconciliation.parquet' "
-            "where is_settled and outstanding_net_kobo != 0"
+            "where is_amount_matched and outstanding_net_kobo != 0"
         )
         .fetchone()[0]
     )
@@ -131,10 +131,60 @@ def test_outstanding_exposure_matches_unsettled_rows(dbt_run):
     con = duckdb.connect()
     p = f"{marts}/mart_settlement_reconciliation.parquet"
     unsettled, exposure = con.execute(
-        f"select count(*) filter (where not is_settled), sum(outstanding_net_kobo) from '{p}'"
+        f"select count(*) filter (where reconciliation_status in "
+        f"('missing_settlement', 'partial_settlement', 'short_paid')), "
+        f"sum(outstanding_net_kobo) from '{p}'"
     ).fetchone()
     assert unsettled > 0
     assert exposure > 0, "unsettled transactions but zero exposure; the sum is wrong"
+
+
+def test_reconciliation_statuses_are_amount_and_source_aware(dbt_run):
+    duckdb = pytest.importorskip("duckdb")
+    marts, _ = dbt_run
+    p = f"{marts}/mart_settlement_reconciliation.parquet"
+    statuses = dict(
+        duckdb.connect()
+        .execute(f"select reconciliation_status, count(*) from '{p}' group by 1")
+        .fetchall()
+    )
+    assert statuses.get("matched", 0) > 0
+    assert statuses.get("missing_settlement", 0) > 0
+    assert statuses.get("unverified_source", 0) > 0
+    amount_mismatch_statuses = ("partial_settlement", "short_paid", "overpaid")
+    assert sum(statuses.get(status, 0) for status in amount_mismatch_statuses) > 0
+
+
+def test_stale_source_marks_missing_settlements_unverified(dbt_run):
+    duckdb = pytest.importorskip("duckdb")
+    marts, _ = dbt_run
+    p = f"{marts}/mart_settlement_reconciliation.parquet"
+    stale_breaches = (
+        duckdb.connect()
+        .execute(
+            f"select count(*) from '{p}' "
+            "where source_freshness_status = 'stale_or_incomplete' "
+            "and reconciliation_status = 'missing_settlement'"
+        )
+        .fetchone()[0]
+    )
+    assert stale_breaches == 0
+
+
+def test_merchant_specific_expected_dates_and_payouts_are_exposed(dbt_run):
+    duckdb = pytest.importorskip("duckdb")
+    marts, _ = dbt_run
+    con = duckdb.connect()
+    reconciliation = f"{marts}/mart_settlement_reconciliation.parquet"
+    settlements = f"{marts}/fct_settlements.parquet"
+    invalid_expected_dates = f"select count(*) from '{reconciliation}' " + (
+        "where expected_settlement_date < succeeded_date"
+    )
+    assert con.execute(invalid_expected_dates).fetchone()[0] == 0
+    assert (
+        con.execute(f"select count(*) from '{settlements}' where payout_id is null").fetchone()[0]
+        == 0
+    )
 
 
 def test_merchant_daily_attempts_tie_back_to_the_fact_table(dbt_run):
