@@ -24,6 +24,7 @@ select
     fx_rate_to_ngn,
     created_at,
     updated_at,
+    successful_at,
     ingested_at,
     event_date,
     arrival_lag_seconds,
