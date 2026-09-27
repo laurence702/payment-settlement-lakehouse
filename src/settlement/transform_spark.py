@@ -127,7 +127,13 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
     #    one reference share an updated_at, which happens when a producer emits
     #    a pending and a terminal status inside the same clock tick.
     rank_expr = F.create_map(*[x for k, v in STATUS_RANK.items() for x in (F.lit(k), F.lit(v))])
-    ranked = deduped.withColumn("status_rank", rank_expr[F.col("status")])
+    transaction_window = Window.partitionBy("transaction_ref")
+    successful_at = F.max(F.when(F.col("status") == "success", F.col("updated_at"))).over(
+        transaction_window
+    )
+    ranked = deduped.withColumn("status_rank", rank_expr[F.col("status")]).withColumn(
+        "successful_at", successful_at
+    )
 
     w = Window.partitionBy("transaction_ref").orderBy(
         F.col("updated_at").desc(), F.col("status_rank").desc(), F.col("event_id").desc()
@@ -163,7 +169,10 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
         .withColumn("event_date", F.to_date("created_at"))
         .withColumn(
             "expected_settlement_date",
-            F.date_add(F.to_date("updated_at"), F.col("settlement_lag_days")),
+            F.date_add(
+                F.to_date(F.coalesce(F.col("successful_at"), F.col("updated_at"))),
+                F.col("settlement_lag_days"),
+            ),
         )
         .withColumn("processed_at", F.lit(datetime.now(UTC)).cast("timestamp"))
         .drop("status_rank")

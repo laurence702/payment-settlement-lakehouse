@@ -36,6 +36,7 @@ renamed as (
 
         cast(created_at   as timestamp) as created_at,
         cast(updated_at   as timestamp) as updated_at,
+        cast(successful_at as timestamp) as successful_at,
         cast(ingested_at  as timestamp) as ingested_at,
         cast(event_date   as date)      as event_date,
         cast(arrival_lag_seconds as bigint) as arrival_lag_seconds,
