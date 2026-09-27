@@ -25,8 +25,8 @@ eligible as (
         t.currency,
         t.amount_ngn_kobo,
         t.fee_ngn_kobo,
-        t.updated_at as succeeded_at,
-        cast(t.updated_at as date) as succeeded_date,
+        t.successful_at as succeeded_at,
+        cast(t.successful_at as date) as succeeded_date,
         t.expected_settlement_date,
         t.settlement_source_watermark_at,
         t.status
