@@ -15,7 +15,7 @@ Scope, stated plainly because it matters more than the code:
   processed, and staged back up. On a real cluster you would delete the two
   pyarrow calls and pass an s3a:// path. See the ADR.
 
-What this stage actually fixes:
+This stage addresses:
 
   * Duplicate delivery. Kafka is at-least-once; the same event_id appears twice.
   * Multiple events per transaction. pending then success is two rows for one
@@ -92,8 +92,8 @@ def build_session(driver_memory: str, shuffle_partitions: int):
         # local[2] instead of local[*]: all executor threads share the single
         # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
         # peak RSS of concurrent window-function shuffles exceeds the limit.
-        # Two threads halves the in-flight memory at a ~30 % speed cost that
-        # is irrelevant on a portfolio demo stack.
+        # Two threads halve in-flight memory at a modest throughput cost, which
+        # keeps the local pipeline within its 6 GB memory envelope.
         .master("local[2]")
         .config("spark.driver.memory", driver_memory)
         # The default of 200 shuffle partitions on a laptop produces 200 tiny
