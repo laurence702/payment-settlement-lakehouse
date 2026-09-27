@@ -1,15 +1,15 @@
 """Kafka -> object store, raw layer.
 
-Design decisions worth defending in an interview:
+Key operational constraints:
 
 * This is a BATCH drain of a stream, not a streaming job. It reads until the
   broker stops handing it messages, then exits. Airflow schedules batches; a
   never-ending consumer inside an Airflow task is a task that never succeeds.
 
-* Offsets are committed only AFTER the Parquet file is durably written. That
-  ordering is the whole difference between at-least-once (a crash re-reads and
-  the dedupe downstream absorbs it) and at-most-once (a crash silently loses
-  data). Auto-commit is disabled for this reason.
+* Offsets are committed only AFTER the Parquet file is durably written. This
+  preserves at-least-once delivery: a crash re-reads records and downstream
+  deduplication absorbs them instead of silently losing data. Auto-commit is
+  disabled for this reason.
 
 * The raw layer is append-only and keeps duplicates, out-of-order events and
   malformed rows. Cleaning here would destroy the evidence you need when a

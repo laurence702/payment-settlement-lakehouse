@@ -1,8 +1,6 @@
-"""Synthetic Paystack/Flutterwave-shaped payment events.
+"""Generate deterministic synthetic Paystack/Flutterwave-shaped payment events.
 
-The point of this generator is NOT to make pretty data. It is to manufacture,
-deterministically, the four things that make payments data genuinely hard and
-that a clean synthetic dataset would hide:
+The dataset includes payment-data conditions that reconciliation must handle:
 
   1. Multiple events per transaction. A charge emits pending, then a terminal
      status. Downstream must collapse them to one row.
@@ -10,7 +8,7 @@ that a clean synthetic dataset would hide:
   3. Out-of-order arrival. The terminal event sometimes lands before the
      pending event it supersedes, so ordering by arrival is wrong.
   4. Missing settlements. A few percent of successful charges never settle.
-     Finding those is the actual business question this pipeline answers.
+     The reconciliation mart identifies their expected outstanding amount.
 
 Everything here is stdlib only and seeded, so the tests can assert on exact
 counts without Kafka, pyarrow, or a network.
