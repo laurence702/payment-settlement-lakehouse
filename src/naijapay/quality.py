@@ -87,7 +87,8 @@ def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:
     FX_DRIFT_HARD_LIMIT = 0.05
     usd_variance = client.command(
         f"SELECT "
-        f"  countIf(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo) > {FX_DRIFT_HARD_LIMIT}), "
+        "  countIf(abs(settlement_variance_kobo) / "
+        f"(amount_ngn_kobo - fee_ngn_kobo) > {FX_DRIFT_HARD_LIMIT}), "
         f"  max(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
         f"  avg(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
         f"  count() "
