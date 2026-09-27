@@ -118,6 +118,10 @@ def transaction_event_schema():
             pa.field("currency", pa.string(), nullable=False),
             pa.field("fx_rate_to_ngn", pa.float64(), nullable=True),
             pa.field("failure_reason", pa.string(), nullable=True),
+            pa.field("settlement_lag_days", pa.int32(), nullable=False),
+            pa.field(
+                "settlement_source_watermark_at", pa.timestamp("us", tz="UTC"), nullable=False
+            ),
             pa.field("created_at", pa.timestamp("us", tz="UTC"), nullable=False),
             pa.field("updated_at", pa.timestamp("us", tz="UTC"), nullable=False),
             # Stamped by the ingester, not the producer. The gap between this
@@ -135,6 +139,7 @@ def settlement_event_schema():
             pa.field("event_id", pa.string(), nullable=False),
             pa.field("event_ts", pa.timestamp("us", tz="UTC"), nullable=False),
             pa.field("settlement_id", pa.string(), nullable=False),
+            pa.field("payout_id", pa.string(), nullable=False),
             pa.field("merchant_id", pa.string(), nullable=False),
             pa.field("transaction_ref", pa.string(), nullable=False),
             pa.field("gross_kobo", pa.int64(), nullable=False),

@@ -28,12 +28,23 @@ models:
         data_tests: [not_null]
       - name: event_date
         data_tests: [not_null]
+      - name: settlement_lag_days
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2]
+      - name: expected_settlement_date
+        data_tests: [not_null]
+      - name: settlement_source_watermark_at
+        data_tests: [not_null]
 
   - name: stg_settlements
     description: One row per settlement_id.
     columns:
       - name: settlement_id
         data_tests: [unique, not_null]
+      - name: payout_id
+        data_tests: [not_null]
       - name: transaction_ref
         data_tests:
           - not_null

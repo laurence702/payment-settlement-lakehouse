@@ -14,7 +14,12 @@ SEED = 20260909
 @pytest.fixture(scope="session")
 def events():
     """A small but pathological dataset: duplicates, out-of-order, unsettled."""
-    return generate_events(n_transactions=3000, days=14, seed=SEED)
+    return generate_events(
+        n_transactions=3000,
+        days=14,
+        seed=SEED,
+        settlement_source_delay_days=4,
+    )
 
 
 @pytest.fixture(scope="session")
@@ -57,7 +62,13 @@ def raw_parquet_dir(tmp_path_factory, events) -> Path:
                     rec[f.name] = now
                 elif f.name == "settlement_date":
                     rec[f.name] = datetime.fromisoformat(r[f.name]).date()
-                elif f.name in ("event_ts", "created_at", "updated_at", "settled_at"):
+                elif f.name in (
+                    "event_ts",
+                    "created_at",
+                    "updated_at",
+                    "settled_at",
+                    "settlement_source_watermark_at",
+                ):
                     rec[f.name] = datetime.fromisoformat(r[f.name])
                 else:
                     rec[f.name] = r.get(f.name)

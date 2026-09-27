@@ -5,7 +5,7 @@ deterministically, the four things that make payments data genuinely hard and
 that a clean synthetic dataset would hide:
 
   1. Multiple events per transaction. A charge emits pending, then a terminal
-     status. Downstream must collapse them to one row, latest wins.
+     status. Downstream must collapse them to one row.
   2. Duplicates. At-least-once delivery means the same event_id shows up twice.
   3. Out-of-order arrival. The terminal event sometimes lands before the
      pending event it supersedes, so ordering by arrival is wrong.
@@ -49,6 +49,9 @@ OUT_OF_ORDER_RATE = 0.05  # terminal event overtakes its own pending event
 REVERSAL_RATE = 0.012  # success later reversed (chargeback / failed payout)
 UNSETTLED_RATE = 0.031  # successful but never settled: the reconciliation gap
 USD_RATE = 0.04  # share of card charges denominated in USD
+PARTIAL_SETTLEMENT_RATE = 0.006
+SHORT_PAYMENT_RATE = 0.008
+OVERPAYMENT_RATE = 0.004
 
 NGN_PER_USD = 1_615.0  # static on purpose; a real pipeline joins an fx table
 
@@ -125,6 +128,7 @@ def generate_events(
     days: int,
     seed: int,
     end_date: date | None = None,
+    settlement_source_delay_days: int = 0,
 ) -> tuple[list[dict], list[dict]]:
     """Return (transaction_events, settlement_events).
 
@@ -133,6 +137,9 @@ def generate_events(
     rng = random.Random(seed)
     merchants = build_merchants(rng)
     end = end_date or datetime.now(UTC).date()
+    source_watermark = datetime.combine(
+        end + timedelta(days=2 - settlement_source_delay_days), datetime.max.time(), tzinfo=UTC
+    )
     window_start = datetime.combine(end - timedelta(days=days), datetime.min.time(), tzinfo=UTC)
 
     tx_events: list[dict] = []
@@ -208,6 +215,7 @@ def generate_events(
             _currency: str = currency,
             _fx: float | None = fx,
             _created: datetime = created,
+            _settlement_lag_days: int = merchant.settlement_lag_days,
         ) -> dict:
             return {
                 "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
@@ -224,6 +232,8 @@ def generate_events(
                 "currency": _currency,
                 "fx_rate_to_ngn": _fx,
                 "failure_reason": reason,
+                "settlement_lag_days": _settlement_lag_days,
+                "settlement_source_watermark_at": source_watermark.isoformat(),
                 "created_at": _created.isoformat(),
                 "updated_at": ts.isoformat(),
             }
@@ -246,19 +256,18 @@ def generate_events(
         tx_events.extend(pair)
 
         # 4. late reversal of an earlier success
-        reversed_later = False
         if settled_ok and rng.random() < REVERSAL_RATE:
             rev_ts = confirm + timedelta(hours=rng.uniform(6, 96))
             tx_events.append(base_event(Status.REVERSED, rev_ts, "chargeback"))
-            reversed_later = True
 
         # 5. duplicate redelivery of a random event in this transaction
         if rng.random() < DUPLICATE_RATE:
             tx_events.append(dict(rng.choice(pair)))
 
-        # 6. settlement, for successes that were not reversed and did not fall
-        #    into the unsettled gap
-        if settled_ok and not reversed_later and rng.random() > UNSETTLED_RATE:
+        # 6. Settlement lines are grouped into merchant/date payout batches.
+        # A late reversal may follow a settlement and must remain visible to
+        # reconciliation rather than being silently treated as an ordinary gap.
+        if settled_ok and rng.random() > UNSETTLED_RATE:
             sdate = (confirm + timedelta(days=merchant.settlement_lag_days)).date()
             settled_at = datetime.combine(sdate, datetime.min.time(), tzinfo=UTC) + timedelta(
                 hours=rng.uniform(9, 17)
@@ -273,16 +282,28 @@ def generate_events(
             settlement_fx = NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
             gross = amount if currency == "NGN" else int(amount * settlement_fx)
             gross_fee = fee if currency == "NGN" else int(fee * settlement_fx)
+            expected_net = gross - gross_fee
+            adjustment = rng.random()
+            if adjustment < PARTIAL_SETTLEMENT_RATE:
+                settled_net = expected_net // 2
+            elif adjustment < PARTIAL_SETTLEMENT_RATE + SHORT_PAYMENT_RATE:
+                settled_net = max(0, expected_net - max(1, expected_net // 100))
+            elif adjustment < PARTIAL_SETTLEMENT_RATE + SHORT_PAYMENT_RATE + OVERPAYMENT_RATE:
+                settled_net = expected_net + max(1, expected_net // 100)
+            else:
+                settled_net = expected_net
+            gross = settled_net + gross_fee
             settlements.append(
                 {
                     "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
                     "event_ts": settled_at.isoformat(),
                     "settlement_id": f"STL_{uuid.UUID(int=rng.getrandbits(128)).hex[:14]}",
+                    "payout_id": f"PYO_{merchant.merchant_id}_{sdate:%Y%m%d}",
                     "merchant_id": merchant.merchant_id,
                     "transaction_ref": ref,
                     "gross_kobo": gross,
                     "fee_kobo": gross_fee,
-                    "net_kobo": gross - gross_fee,
+                    "net_kobo": settled_net,
                     "currency": "NGN",
                     "settlement_date": sdate.isoformat(),
                     "settled_at": settled_at.isoformat(),

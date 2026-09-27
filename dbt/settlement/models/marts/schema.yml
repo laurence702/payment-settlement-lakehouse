@@ -26,6 +26,20 @@ models:
           - accepted_values:
               arguments:
                 values: ['settled', 'pending_t1', 'pending_t2', 'pending_within_sla', 'breached_sla']
+      - name: reconciliation_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['matched', 'missing_settlement', 'partial_settlement', 'short_paid', 'overpaid', 'reversed_after_settlement', 'unverified_source']
+      - name: source_freshness_status
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['fresh', 'stale_or_incomplete']
+      - name: expected_net_kobo
+        data_tests: [not_null]
       - name: outstanding_net_kobo
         data_tests: [not_null]
 

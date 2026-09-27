@@ -63,7 +63,27 @@ def test_money_is_always_integer_kobo(events_small):
         assert e["fee_kobo"] >= 0
     for s in stl:
         assert s["net_kobo"] == s["gross_kobo"] - s["fee_kobo"]
+        assert isinstance(s["net_kobo"], int)
         assert s["net_kobo"] >= 0
+
+
+def test_transactions_carry_merchant_settlement_rule_and_source_watermark(events_small):
+    tx, _ = events_small
+    assert {event["settlement_lag_days"] for event in tx} <= {1, 2}
+    assert all(event["settlement_source_watermark_at"] for event in tx)
+
+
+def test_settlement_lines_share_payout_batches(events_small):
+    _, stl = events_small
+    payout_counts = collections.Counter(event["payout_id"] for event in stl)
+    assert all(event["payout_id"].startswith("PYO_") for event in stl)
+    assert max(payout_counts.values()) > 1, "settlements are not grouped into payout batches"
+
+
+def test_source_watermark_can_be_deterministically_delayed():
+    tx, _ = generate_events(20, 2, seed=11, settlement_source_delay_days=4)
+    watermark_dates = {event["settlement_source_watermark_at"][:10] for event in tx}
+    assert len(watermark_dates) == 1
 
 
 def test_fee_never_exceeds_amount(events_small):
