@@ -108,6 +108,22 @@ def test_settlements_are_deduplicated(spark, raw_parquet_dir, tmp_path, events):
     assert metrics["settlements_out"] == len({s["settlement_id"] for s in stl})
 
 
+def test_staged_transactions_expose_expected_settlement_dates(spark, raw_parquet_dir, tmp_path):
+    from naijapay.transform_spark import transform_transactions
+
+    transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "out")
+    rows = spark.read.parquet((tmp_path / "out").as_posix()).select(
+        "settlement_lag_days", "expected_settlement_date", "settlement_source_watermark_at"
+    )
+    assert rows.filter("settlement_lag_days not in (1, 2)").count() == 0
+    assert (
+        rows.filter(
+            "expected_settlement_date is null or settlement_source_watermark_at is null"
+        ).count()
+        == 0
+    )
+
+
 def test_output_is_reproducible(spark, raw_parquet_dir, tmp_path):
     """Two runs over identical input must agree exactly.
 

@@ -27,6 +27,9 @@ select
     ingested_at,
     event_date,
     arrival_lag_seconds,
+    settlement_lag_days,
+    expected_settlement_date,
+    settlement_source_watermark_at,
     is_success,
     is_reversed,
     is_settlement_eligible

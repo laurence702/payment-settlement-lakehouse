@@ -4,16 +4,8 @@
     format       = 'parquet'
 ) }}
 
--- The model this whole pipeline exists to produce.
---
--- Question: which successful charges have not been settled, and how overdue
--- are they? In a real PSP integration this is the difference between "we are
--- owed money and nobody noticed" and "we caught it the next morning".
---
--- Reproducibility note: "today" is derived from the data (the latest
--- ingested_at), NOT from current_date. A mart whose output changes because you
--- reran it on a different day cannot be tested, and cannot be diffed against a
--- previous run to see what actually changed.
+-- Grain: one successful charge, plus a reversed charge with a prior settlement.
+-- The as-of date is derived from staged input so identical input is reproducible.
 
 with as_of as (
 
@@ -34,9 +26,20 @@ eligible as (
         t.amount_ngn_kobo,
         t.fee_ngn_kobo,
         t.updated_at as succeeded_at,
-        cast(t.updated_at as date) as succeeded_date
+        cast(t.updated_at as date) as succeeded_date,
+        t.expected_settlement_date,
+        t.settlement_source_watermark_at,
+        t.status
     from {{ ref('stg_transactions') }} t
     where t.is_settlement_eligible
+       or (
+           t.is_reversed
+           and exists (
+               select 1
+               from {{ ref('stg_settlements') }} s
+               where s.transaction_ref = t.transaction_ref
+           )
+       )
 
 ),
 
@@ -45,7 +48,9 @@ joined as (
     select
         e.*,
         s.settlement_id,
+        s.payout_id,
         s.settlement_date,
+        s.settled_at,
         s.net_kobo as settled_net_kobo,
         a.as_of_date,
         date_diff('day', e.succeeded_date, a.as_of_date) as days_since_success
@@ -67,35 +72,56 @@ select
     fee_ngn_kobo,
     succeeded_at,
     succeeded_date,
+    expected_settlement_date,
+    settlement_source_watermark_at,
     settlement_id,
+    payout_id,
     settlement_date,
+    settled_at,
     settled_net_kobo,
     as_of_date,
     days_since_success,
 
     settlement_id is not null as is_settled,
-
-    case
-        when settlement_id is not null then 'settled'
-        when days_since_success <= 1 then 'pending_t1'
-        when days_since_success = 2  then 'pending_t2'
-        when days_since_success <= {{ var('settlement_sla_days') }} then 'pending_within_sla'
-        else 'breached_sla'
-    end as reconciliation_bucket,
-
-    -- Money still owed to the merchant. Zero once settled, so this column sums
-    -- straight to total exposure without a filter.
-    case
-        when settlement_id is not null then 0
-        else amount_ngn_kobo - fee_ngn_kobo
-    end as outstanding_net_kobo,
-
-    -- Did the settled amount match what we expected? A non-zero variance on a
-    -- settled row is a pricing or FX bug, and is a different alert from a
-    -- missing settlement.
+    settlement_id is not null
+        and settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo as is_amount_matched,
+    amount_ngn_kobo - fee_ngn_kobo as expected_net_kobo,
     case
         when settlement_id is null then null
         else settled_net_kobo - (amount_ngn_kobo - fee_ngn_kobo)
-    end as settlement_variance_kobo
+    end as settlement_variance_kobo,
+
+    case
+        when settlement_source_watermark_at::date >= expected_settlement_date then 'fresh'
+        else 'stale_or_incomplete'
+    end as source_freshness_status,
+
+    case
+        when status = 'reversed' and settlement_id is not null and settled_at < succeeded_at
+            then 'reversed_after_settlement'
+        when settlement_id is null
+             and settlement_source_watermark_at::date < expected_settlement_date
+            then 'unverified_source'
+        when settlement_id is null then 'missing_settlement'
+        when settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo then 'matched'
+        when settled_net_kobo < (amount_ngn_kobo - fee_ngn_kobo) * 9 / 10 then 'partial_settlement'
+        when settled_net_kobo < amount_ngn_kobo - fee_ngn_kobo then 'short_paid'
+        else 'overpaid'
+    end as reconciliation_status,
+
+    case
+        when settlement_id is not null then 'settled'
+        when settlement_source_watermark_at::date < expected_settlement_date then 'pending_within_sla'
+        when days_since_success <= 1 then 'pending_t1'
+        when days_since_success = 2  then 'pending_t2'
+        when as_of_date <= expected_settlement_date then 'pending_within_sla'
+        else 'breached_sla'
+    end as reconciliation_bucket,
+
+    case
+        when settlement_id is null then amount_ngn_kobo - fee_ngn_kobo
+        when status = 'reversed' and settled_at < succeeded_at then 0
+        else greatest(0, amount_ngn_kobo - fee_ngn_kobo - settled_net_kobo)
+    end as outstanding_net_kobo
 
 from joined
