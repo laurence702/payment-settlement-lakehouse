@@ -20,9 +20,9 @@ select
     t.created_at as transaction_created_at,
     t.channel,
     t.gateway,
-    -- Whole days between the charge succeeding and the money settling. This is
-    -- the number a merchant actually complains about.
-    date_diff('day', cast(t.updated_at as date), s.settlement_date) as settlement_lag_days,
+    -- A reversal can update a transaction after its settlement. Settlement lag
+    -- is therefore anchored to the original success timestamp, not latest state.
+    date_diff('day', cast(t.successful_at as date), s.settlement_date) as settlement_lag_days,
     -- A settlement whose transaction we have never seen. Non-zero here means
     -- either an ingestion gap or a genuine upstream data-quality problem, and
     -- the two need different responses.
