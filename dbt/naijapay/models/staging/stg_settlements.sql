@@ -11,6 +11,7 @@ with source as (
 
 select
     settlement_id,
+    payout_id,
     transaction_ref,
     merchant_id,
     cast(gross_kobo as bigint) as gross_kobo,

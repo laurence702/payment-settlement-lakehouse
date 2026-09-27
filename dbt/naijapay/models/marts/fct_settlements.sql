@@ -8,6 +8,7 @@
 
 select
     s.settlement_id,
+    s.payout_id,
     s.transaction_ref,
     s.merchant_id,
     s.gross_kobo,

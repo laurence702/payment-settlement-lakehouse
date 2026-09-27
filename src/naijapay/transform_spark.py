@@ -161,6 +161,10 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
         )
         .withColumn("is_terminal", F.col("status").isin("success", "failed", "reversed"))
         .withColumn("event_date", F.to_date("created_at"))
+        .withColumn(
+            "expected_settlement_date",
+            F.date_add(F.to_date("updated_at"), F.col("settlement_lag_days")),
+        )
         .withColumn("processed_at", F.lit(datetime.now(UTC)).cast("timestamp"))
         .drop("status_rank")
     )
