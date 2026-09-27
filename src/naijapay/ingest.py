@@ -29,7 +29,43 @@ from pyarrow import fs as pafs
 from naijapay.config import Settings, get_settings
 from naijapay.schemas import settlement_event_schema, transaction_event_schema
 
-_TS_FIELDS = ("event_ts", "created_at", "updated_at", "settled_at")
+_TS_FIELDS = (
+    "event_ts",
+    "created_at",
+    "updated_at",
+    "settled_at",
+    "settlement_source_watermark_at",
+)
+_QUARANTINE_MAX_PAYLOAD_BYTES = 256_000
+
+
+def quarantine_record(
+    raw_payload: bytes | None, topic: str, ingested_at: datetime, error: Exception
+) -> dict:
+    """Build a bounded, append-only record for a malformed Kafka message."""
+    payload = raw_payload or b""
+    truncated = len(payload) > _QUARANTINE_MAX_PAYLOAD_BYTES
+    payload = payload[:_QUARANTINE_MAX_PAYLOAD_BYTES]
+    return {
+        "source_topic": topic,
+        "ingested_at": ingested_at,
+        "error_type": type(error).__name__,
+        # Do not persist exception text: parser errors can echo sensitive input.
+        "raw_payload": payload.decode("utf-8", errors="replace"),
+        "payload_truncated": truncated,
+    }
+
+
+def _quarantine_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("source_topic", pa.string(), nullable=False),
+            pa.field("ingested_at", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("error_type", pa.string(), nullable=False),
+            pa.field("raw_payload", pa.string(), nullable=False),
+            pa.field("payload_truncated", pa.bool_(), nullable=False),
+        ]
+    )
 
 
 def _s3(settings: Settings) -> pafs.S3FileSystem:
@@ -97,27 +133,39 @@ def drain_topic(
     partition_date = ingested_at.date().isoformat()
 
     buf: list[dict] = []
-    stats = {"consumed": 0, "written": 0, "malformed": 0, "files": 0}
+    quarantine_buf: list[dict] = []
+    stats = {"consumed": 0, "written": 0, "malformed": 0, "files": 0, "quarantine_files": 0}
     deadline = datetime.now(UTC) + timedelta(seconds=idle_timeout_s)
     part_no = 0
 
     def flush() -> None:
-        nonlocal buf, part_no
-        if not buf:
+        nonlocal buf, quarantine_buf, part_no
+        if not buf and not quarantine_buf:
             return
-        for row in buf:
-            row["ingested_at"] = ingested_at
-        table = pa.Table.from_pylist(buf, schema=schema)
-        key = (
-            f"{settings.bucket_raw}/{dataset}/ingest_date={partition_date}/"
-            f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
-        )
-        with s3.open_output_stream(key) as sink:
-            pq.write_table(table, sink, compression="zstd")
-        stats["written"] += len(buf)
-        stats["files"] += 1
+        if buf:
+            for row in buf:
+                row["ingested_at"] = ingested_at
+            table = pa.Table.from_pylist(buf, schema=schema)
+            key = (
+                f"{settings.bucket_raw}/{dataset}/ingest_date={partition_date}/"
+                f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
+            )
+            with s3.open_output_stream(key) as sink:
+                pq.write_table(table, sink, compression="zstd")
+            stats["written"] += len(buf)
+            stats["files"] += 1
+            buf = []
+        if quarantine_buf:
+            table = pa.Table.from_pylist(quarantine_buf, schema=_quarantine_schema())
+            key = (
+                f"{settings.bucket_raw}/quarantine/{dataset}/ingest_date={partition_date}/"
+                f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
+            )
+            with s3.open_output_stream(key) as sink:
+                pq.write_table(table, sink, compression="zstd")
+            stats["quarantine_files"] += 1
+            quarantine_buf = []
         part_no += 1
-        buf = []
 
     try:
         while stats["consumed"] < max_messages:
@@ -135,10 +183,12 @@ def drain_topic(
             stats["consumed"] += 1
             try:
                 buf.append(_coerce(json.loads(msg.value()), schema))
-            except Exception:
-                # A poison message must not take down the whole batch. Count it
-                # and move on; the count is asserted on downstream.
+            except Exception as exc:
                 stats["malformed"] += 1
+                quarantine_buf.append(quarantine_record(msg.value(), topic, ingested_at, exc))
+                if len(quarantine_buf) >= batch_rows:
+                    flush()
+                    consumer.commit(asynchronous=False)
                 continue
 
             if len(buf) >= batch_rows:
