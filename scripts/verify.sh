@@ -105,21 +105,22 @@ else
   bad "mart_settlement_reconciliation empty or unreadable (got '${rows}'; see $REPORT/clickhouse-err.txt)"
 fi
 
-# 5. the reconciliation says something true. NGN settles at the charged amount,
-# so its variance must be exactly zero; USD settles at a later FX rate, so a
-# run where every USD variance is zero means settlement FX is being reused.
+# 5. Matched rows must have no variance or outstanding balance. NGN amount
+# discrepancies and USD FX drift are explicit v0.2 reconciliation outcomes.
 variance=$(docker exec np_clickhouse clickhouse-client \
   --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --format TSV \
   --query "SELECT
-             countIf(currency = 'NGN' AND is_settled AND settlement_variance_kobo != 0),
+             countIf(reconciliation_status = 'matched' AND
+                     (settlement_variance_kobo != 0 OR outstanding_net_kobo != 0 OR NOT is_amount_matched)),
+             countIf(currency = 'NGN' AND is_settled AND NOT is_amount_matched),
              countIf(currency = 'USD' AND is_settled AND settlement_variance_kobo != 0)
            FROM ${CLICKHOUSE_DB}.mart_settlement_reconciliation" 2>>"$REPORT/clickhouse-err.txt" || echo "")
-read -r ngn_off usd_drift <<< "${variance:-x x}"
-if [[ "$ngn_off" =~ ^[0-9]+$ ]] && [[ "$usd_drift" =~ ^[0-9]+$ ]]; then
-  if [ "$ngn_off" -eq 0 ] && [ "$usd_drift" -gt 0 ]; then
-    pass "variance: NGN settled rows all zero, $usd_drift USD settled rows show FX drift"
+read -r matched_bad ngn_discrepancies usd_drift <<< "${variance:-x x x}"
+if [[ "$matched_bad" =~ ^[0-9]+$ ]] && [[ "$ngn_discrepancies" =~ ^[0-9]+$ ]] && [[ "$usd_drift" =~ ^[0-9]+$ ]]; then
+  if [ "$matched_bad" -eq 0 ] && [ "$usd_drift" -gt 0 ]; then
+    pass "variance: matched rows consistent; $ngn_discrepancies NGN discrepancies and $usd_drift USD variances observed"
   else
-    bad "variance: $ngn_off NGN settled rows non-zero (want 0), $usd_drift USD rows with FX drift (want > 0)"
+    bad "variance: $matched_bad inconsistent matched rows (want 0), $usd_drift USD rows with variance (want > 0)"
   fi
 else
   bad "variance check could not read the mart (got '${variance}')"
