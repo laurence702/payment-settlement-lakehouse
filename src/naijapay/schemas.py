@@ -33,6 +33,12 @@ class Status:
 
 
 class Gateway:
+    """Synthetic gateway labels modelled on Nigerian PSP fee structures.
+
+    These are dataset values used in generated events only.
+    This project has no affiliation with or integration to any named provider.
+    """
+
     PAYSTACK: Final = "paystack"
     FLUTTERWAVE: Final = "flutterwave"
     ALL: Final = ("paystack", "flutterwave")
