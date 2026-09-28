@@ -38,89 +38,75 @@ def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:
     if dupes:
         hard.append({"check": "fct_transactions_unique_ref", "duplicate_refs": dupes})
 
-    # 3. A settled row must carry zero outstanding balance.
+    # 3. A matched row must carry zero outstanding balance. A settlement line
+    #    can be partial or short-paid, so presence alone does not reconcile it.
     bad = int(
         client.command(
             f"SELECT count() FROM {db}.mart_settlement_reconciliation "
-            f"WHERE is_settled AND outstanding_net_kobo != 0"
+            f"WHERE is_amount_matched AND outstanding_net_kobo != 0"
         )
     )
     if bad:
-        hard.append({"check": "settled_rows_zero_outstanding", "violations": bad})
+        hard.append({"check": "matched_rows_zero_outstanding", "violations": bad})
 
-    # 4. Reconciliation totals must tie back to the transaction fact. If these
-    #    disagree, one of the two loads is stale and the dashboard is lying.
-    recon_success = int(client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation"))
-    fct_success = int(
-        client.command(f"SELECT count() FROM {db}.fct_transactions WHERE is_settlement_eligible")
+    # 4. Reconciliation totals must tie back to the transaction fact. The mart
+    #    grain is: all settlement-eligible transactions, plus reversed
+    #    transactions that carry a prior settlement (reversed_after_settlement).
+    #    That second population is absent from is_settlement_eligible, so the
+    #    query must mirror the mart's own WHERE predicate.
+    recon_count = int(client.command(f"SELECT count() FROM {db}.mart_settlement_reconciliation"))
+    expected_count = int(
+        client.command(
+            f"SELECT count() FROM {db}.fct_transactions "
+            f"WHERE is_settlement_eligible "
+            f"   OR (is_reversed AND transaction_ref IN "
+            f"       (SELECT transaction_ref FROM {db}.fct_settlements))"
+        )
     )
-    if recon_success != fct_success:
+    if recon_count != expected_count:
         hard.append(
             {
                 "check": "reconciliation_ties_to_fact",
-                "reconciliation_rows": recon_success,
-                "eligible_transactions": fct_success,
+                "reconciliation_rows": recon_count,
+                "expected_rows": expected_count,
             }
         )
 
-    # 5a. Hard: an NGN settlement never touches an FX rate, so its variance
-    #     must be exactly zero. Any non-zero value here is a pricing bug, full
-    #     stop, regardless of size.
-    ngn_bad = int(
+    # 5a. A matched row cannot carry a variance. Amount discrepancies are
+    #     explicit v0.2 reconciliation outcomes, including for NGN lines.
+    matched_bad = int(
         client.command(
             f"SELECT count() FROM {db}.mart_settlement_reconciliation "
-            f"WHERE is_settled AND currency = 'NGN' AND settlement_variance_kobo != 0"
+            f"WHERE reconciliation_status = 'matched' "
+            f"AND (settlement_variance_kobo != 0 OR outstanding_net_kobo != 0 "
+            f"OR NOT is_amount_matched)"
         )
     )
-    if ngn_bad:
-        hard.append({"check": "ngn_settlement_variance_nonzero", "rows": ngn_bad})
+    if matched_bad:
+        hard.append({"check": "matched_reconciliation_consistency", "rows": matched_bad})
 
-    # 5b. USD settlement FX drift. generate.py samples both the charge-time
-    #     and settlement-time rate independently from
-    #     NGN_PER_USD * rng.uniform(0.985, 1.015), so a settled USD row is
-    #     expected to carry real, amount-proportional variance now, not just
-    #     sub-kobo rounding noise. Two independent draws from that range bound
-    #     the theoretical worst case at 1.015/0.985 - 1 ~= 3.05% of the row's
-    #     gross amount; 5% leaves headroom for legitimate noise while still
-    #     catching an actual pricing or currency bug, which would blow well
-    #     past that band.
-    FX_DRIFT_HARD_LIMIT = 0.05
-    usd_variance = client.command(
+    # 5b. Preserve serving-layer visibility for expected v0.2 discrepancies
+    #     without treating them as a pipeline failure. USD lines additionally
+    #     include independently sampled settlement-time FX drift.
+    variance_counts = client.command(
         f"SELECT "
-        "  countIf(abs(settlement_variance_kobo) / "
-        f"(amount_ngn_kobo - fee_ngn_kobo) > {FX_DRIFT_HARD_LIMIT}), "
-        f"  max(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
-        f"  avg(abs(settlement_variance_kobo) / (amount_ngn_kobo - fee_ngn_kobo)), "
-        f"  count() "
+        "  countIf(currency = 'NGN' AND is_settled AND NOT is_amount_matched), "
+        "  countIf(currency = 'USD' AND is_settled AND settlement_variance_kobo != 0) "
         f"FROM {db}.mart_settlement_reconciliation "
-        f"WHERE is_settled AND currency = 'USD' AND (amount_ngn_kobo - fee_ngn_kobo) != 0"
     )
-    over_limit, max_ratio, avg_ratio, usd_n = (
-        int(usd_variance[0] or 0),
-        float(usd_variance[1] or 0),
-        float(usd_variance[2] or 0),
-        int(usd_variance[3] or 0),
+    ngn_discrepancies, usd_variances = (
+        int(variance_counts[0] or 0),
+        int(variance_counts[1] or 0),
     )
-    if usd_n:
-        if over_limit:
-            hard.append(
-                {
-                    "check": "usd_settlement_fx_drift",
-                    "rows_over_limit": over_limit,
-                    "max_ratio": round(max_ratio, 4),
-                    "limit": FX_DRIFT_HARD_LIMIT,
-                }
-            )
-        elif max_ratio:
-            soft.append(
-                {
-                    "check": "usd_settlement_fx_drift",
-                    "settled_usd_rows": usd_n,
-                    "avg_ratio": round(avg_ratio, 4),
-                    "max_ratio": round(max_ratio, 4),
-                    "note": "expected settlement-time FX drift, not a defect",
-                }
-            )
+    if ngn_discrepancies or usd_variances:
+        soft.append(
+            {
+                "check": "settlement_amount_discrepancies",
+                "ngn_amount_discrepancies": ngn_discrepancies,
+                "usd_rows_with_variance": usd_variances,
+                "note": "review by reconciliation status before escalation",
+            }
+        )
 
     return hard, soft
 
