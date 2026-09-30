@@ -5,7 +5,7 @@ __pycache__/
 .venv/
 venv/
 logs/
-dbt/naijapay/target/
+dbt/*/target/
 dbt/naijapay/dbt_packages/
 dbt/naijapay/logs/
 data/local/

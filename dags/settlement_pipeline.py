@@ -1,4 +1,4 @@
-"""End-to-end NaijaPay settlement reconciliation pipeline.
+"""End-to-end payment settlement reconciliation pipeline.
 
     generate -> kafka -> raw parquet (S3)
              -> spark dedupe/latest-wins -> staged parquet (S3)
@@ -27,14 +27,14 @@ DEFAULT_ARGS = {
 
 
 @dag(
-    dag_id="naijapay_pipeline",
-    description="Nigerian payments settlement reconciliation, ingest to serving",
+    dag_id="settlement_pipeline",
+    description="Payment settlement reconciliation: ingest to serving",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     schedule=None,
     catchup=False,
     max_active_runs=1,
     default_args=DEFAULT_ARGS,
-    tags=["naijapay", "lakehouse", "portfolio"],
+    tags=["settlement", "lakehouse", "portfolio"],
     params={
         "event_count": 50000,
         "days": 14,
@@ -46,14 +46,14 @@ DEFAULT_ARGS = {
         "skip_generate": False,
     },
 )
-def naijapay_pipeline():
+def settlement_pipeline():
 
     @task
     def preflight() -> dict:
         """Verify network connectivity to Kafka, S3, and ClickHouse before pipeline execution."""
         import socket
 
-        from naijapay.config import get_settings
+        from settlement.config import get_settings
 
         s = get_settings()
         targets = {
@@ -80,9 +80,9 @@ def naijapay_pipeline():
     @task
     def generate_events(**context) -> dict:
         """Publish synthetic transaction and settlement events to Kafka."""
-        from naijapay.config import get_settings
-        from naijapay.generate import generate_events as gen
-        from naijapay.generate import publish
+        from settlement.config import get_settings
+        from settlement.generate import generate_events as gen
+        from settlement.generate import publish
 
         params = context["params"]
         if params["skip_generate"]:
@@ -101,9 +101,9 @@ def naijapay_pipeline():
     @task
     def ingest_to_raw(**context) -> dict:
         """Drain both topics into partitioned Parquet in the raw bucket."""
-        from naijapay.config import get_settings
-        from naijapay.ingest import drain_topic
-        from naijapay.schemas import settlement_event_schema, transaction_event_schema
+        from settlement.config import get_settings
+        from settlement.ingest import drain_topic
+        from settlement.schemas import settlement_event_schema, transaction_event_schema
 
         s = get_settings()
         suffix = context["params"]["consumer_group_suffix"]
@@ -117,7 +117,7 @@ def naijapay_pipeline():
                 schema=schema,
                 dataset=dataset,
                 settings=s,
-                group_id=f"naijapay-ingest-{dataset}-{suffix}",
+                group_id=f"settlement-ingest-{dataset}-{suffix}",
             )
         if sum(v["written"] for v in out.values()) == 0:
             raise RuntimeError(
@@ -137,8 +137,8 @@ def naijapay_pipeline():
         """
         import os
 
-        from naijapay.config import get_settings
-        from naijapay.transform_spark import run
+        from settlement.config import get_settings
+        from settlement.transform_spark import run
 
         return run(
             get_settings(),
@@ -160,11 +160,11 @@ def naijapay_pipeline():
             "  --no-use-colors"
         ),
         env={
-            "DBT_PROJECT_DIR": "/opt/airflow/dbt/naijapay",
+            "DBT_PROJECT_DIR": "/opt/airflow/dbt/settlement",
             "DBT_VENV": "/home/airflow/dbt-venv",
             # dbt writes its catalog and logs somewhere writable that is not a
             # bind mount, so a failed run does not litter the host repo.
-            "DBT_DUCKDB_PATH": "/tmp/naijapay.duckdb",
+            "DBT_DUCKDB_PATH": "/tmp/settlement.duckdb",
             "DBT_LOG_PATH": "/tmp/dbt-logs",
             "DBT_TARGET_PATH": "/tmp/dbt-target",
             "S3_ENDPOINT": "{{ var.value.get('s3_endpoint', 'seaweedfs:8333') }}",
@@ -177,16 +177,16 @@ def naijapay_pipeline():
     @task
     def load_clickhouse() -> list[dict]:
         """Load each mart into ClickHouse behind an atomic table swap."""
-        from naijapay.config import get_settings
-        from naijapay.serve import run
+        from settlement.config import get_settings
+        from settlement.serve import run
 
         return run(get_settings())
 
     @task
     def serving_quality_checks() -> dict:
         """Validate what ClickHouse serves, not just what dbt wrote."""
-        from naijapay.config import get_settings
-        from naijapay.quality import run_checks
+        from settlement.config import get_settings
+        from settlement.quality import run_checks
 
         hard, soft = run_checks(get_settings())
         if hard:
@@ -204,4 +204,4 @@ def naijapay_pipeline():
     )
 
 
-naijapay_pipeline()
+settlement_pipeline()
