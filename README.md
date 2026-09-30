@@ -26,22 +26,55 @@ reached a merchant bank account.
 
 ```mermaid
 flowchart LR
-    G["Synthetic event generator"] --> K[Kafka]
-    K --> I["Ingest: raw Parquet"]
-    I --> Q["Quarantine: malformed payloads"]
-    I --> S["PySpark: dedupe and latest status"]
-    S --> D["dbt + DuckDB: staging and marts"]
-    D --> C["ClickHouse serving"]
-    A[Airflow] -. orchestrates .-> G
-    A -. orchestrates .-> I
-    A -. orchestrates .-> S
-    A -. orchestrates .-> D
-    A -. orchestrates .-> C
+    subgraph Ingest["Ingest layer"]
+        G["Synthetic\nevent generator"] --> K["Kafka broker\n(2 topics)"] --> I["Ingest\n(raw Parquet)"]
+        I --> Q["Quarantine\n(malformed payloads)"]
+    end
+
+    subgraph Transform["Transform layer"]
+        I --> SP["PySpark\n(dedupe · latest status)"]
+        SP --> DBT["dbt + DuckDB\n(staging · facts · marts)"]
+    end
+
+    subgraph Serve["Serving layer"]
+        DBT --> CH["ClickHouse\n(atomic table swap)"]
+        CH --> QC["Quality checks\n(5 assertions)"]
+    end
+
+    subgraph Store["Object store"]
+        S3["SeaweedFS / S3\n(raw + staged Parquet)"]
+    end
+
+    I -. raw Parquet .-> S3
+    S3 -. staged Parquet .-> SP
+
+    A["Airflow 3.3.1\n(orchestration)"] -. DAG: naijapay_pipeline .-> Ingest
+    A -. orchestrates .-> Transform
+    A -. orchestrates .-> Serve
 ```
 
-The local stack is Kafka, SeaweedFS-compatible object storage, PySpark, dbt
-with DuckDB, ClickHouse, and Airflow. It is designed for a 6 GB Docker VM; see
-[ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
+The local stack is Kafka, SeaweedFS-compatible object storage (S3-API), PySpark,
+dbt with DuckDB, ClickHouse, and Airflow. It is designed for a 6 GB Docker VM
+(Colima on Apple Silicon); see [ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
+
+## Benchmarks
+
+Numbers from the last successful end-to-end run on an M1 MacBook inside a 6 GB
+Colima VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
+
+| Metric | Value |
+|---|---|
+| End-to-end DAG runtime | **75 seconds** |
+| Total transaction value | **₦1.6 billion** |
+| Outstanding synthetic exposure | **₦51.3 million** |
+| `fct_transactions` | 100,000 rows · 7.84 MiB |
+| `fct_settlements` | 85,180 rows · 5.38 MiB |
+| `mart_settlement_reconciliation` | 87,910 rows · 6.27 MiB |
+| Match rate | 93.4% `matched` |
+| Missing settlement | 2,731 transactions |
+| Amount-mismatched rows | 3,054 rows |
+| Merchants / Customers / Days | 40 / 95,085 / 14 |
+| Automated tests | **49** (unit + Spark + dbt) |
 
 ## Data and reconciliation flow
 
@@ -126,7 +159,7 @@ reconciliation output.
 - dbt tests enforce key uniqueness, required fields, allowed reconciliation and
   freshness states, and basic source relationships.
 - Pytest covers generator pathologies, quarantine records, real Spark staging,
-  and dbt models built from staged Parquet.
+  and dbt models built from staged Parquet (49 tests across 7 modules).
 
 ## Known limitations
 
@@ -149,11 +182,21 @@ reconciliation output.
 
 Implemented in v0.2:
 
-- Amount-aware reconciliation and outstanding-balance semantics.
-- Merchant-specific expected settlement dates.
-- Synthetic source freshness and completeness signaling.
-- Payout-batch identifiers on settlement lines.
-- Append-only malformed-message quarantine.
+- Amount-aware reconciliation with a 7-state `reconciliation_status` and
+  integer-kobo variance and outstanding-balance fields.
+- Merchant-specific expected settlement dates anchored to the original success
+  event, with per-merchant T+1/T+2 SLA classification.
+- Synthetic source freshness and completeness signaling: `unverified_source`
+  prevents a stale settlement feed from being counted as a breach.
+- Payout-batch identifiers on settlement lines, preserving `transaction_ref`
+  grain in `fct_settlements`.
+- Append-only malformed-message quarantine with bounded raw payload retention.
+- Quality-check grain fix: assertion #4 now mirrors the mart grain, including
+  `reversed_after_settlement` rows present in `fct_settlements`.
+
+Benchmark (100k events, 6 GB VM, M1 MacBook):
+75-second end-to-end run · ₦1.6B total value · ₦51.3M synthetic outstanding
+exposure surfaced · 93.4% match rate · 49 automated tests.
 
 Later real-world requirements include signed provider webhooks and report/API
 ingestion, trusted completeness contracts and cutoffs, payout adjustments and
