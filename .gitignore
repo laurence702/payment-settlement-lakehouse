@@ -6,8 +6,8 @@ __pycache__/
 venv/
 logs/
 dbt/*/target/
-dbt/naijapay/dbt_packages/
-dbt/naijapay/logs/
+dbt/*/dbt_packages/
+dbt/*/logs/
 data/local/
 *.duckdb
 *.duckdb.wal

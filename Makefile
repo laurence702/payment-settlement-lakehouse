@@ -88,16 +88,16 @@ logs:  ## Tail airflow logs (S=service to narrow)
 	@COMPOSE_PROFILES=airflow $(COMPOSE) logs -f --tail=100 $(S)
 
 dag-trigger:  ## Trigger the pipeline DAG
-	@docker exec np_airflow_scheduler airflow dags trigger naijapay_pipeline
+	@docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline
 
 dag-logs:  ## Follow the most recent DAG run
-	@docker exec np_airflow_scheduler airflow dags list-runs -d naijapay_pipeline | head -5
+	@docker exec np_airflow_scheduler airflow dags list-runs -d settlement_pipeline | head -5
 
 airflow-shell:  ## Shell inside the airflow scheduler
 	@docker exec -it np_airflow_scheduler bash
 
 dbt-shell:  ## dbt CLI inside the container, against the object store
-	@docker exec -it -w /opt/airflow/dbt/naijapay np_airflow_scheduler \
+	@docker exec -it -w /opt/airflow/dbt/settlement np_airflow_scheduler \
 	  /home/airflow/dbt-venv/bin/dbt $(ARGS)
 
 ch:  ## clickhouse-client shell
@@ -133,6 +133,6 @@ lint:  ## ruff
 	@.venv/bin/ruff format --check src tests dags
 
 clean:  ## Remove local build and test artefacts
-	@rm -rf .pytest_cache .ruff_cache dbt/naijapay/target dbt/naijapay/logs \
-	  dbt/naijapay/dbt_packages *.duckdb *.duckdb.wal
+	@rm -rf .pytest_cache .ruff_cache dbt/*/target dbt/*/logs \
+	  dbt/*/dbt_packages *.duckdb *.duckdb.wal
 	@find . -name __pycache__ -type d -prune -exec rm -rf {} +
