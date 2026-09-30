@@ -1,4 +1,4 @@
-# NaijaPay Settlement Lakehouse — Project Explainer
+# Payment Settlement Lakehouse Settlement Lakehouse — Project Explainer
 
 Two perspectives on the same system: one for anyone curious, one for a
 technical interview.
@@ -118,7 +118,7 @@ generated deterministically from a seeded synthetic data model.
                                ┌───────▼────────┐
                                │  quality.py    │  post-load assertions
                                └────────────────┘
-     All tasks orchestrated by Airflow 3.3.1 (naijapay_pipeline DAG)
+     All tasks orchestrated by Airflow 3.3.1 (settlement_pipeline DAG)
 ```
 
 ### Key engineering decisions and why I made them

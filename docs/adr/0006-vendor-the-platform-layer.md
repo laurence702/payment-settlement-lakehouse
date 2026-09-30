@@ -58,7 +58,7 @@ that silently leaves `data-engineering-shared-infra/` empty until
 
 `docker-compose.yml` (the five services' definitions, verbatim from the
 sibling repo's compose file, plus a renamed network so the two stacks cannot
-collide if both are ever run at once: `naijapay_data_network`, not
+collide if both are ever run at once: `settlement_data_network`, not
 `shared_data_network`), `.env.example` (platform image pins, credentials,
 ports, memory ceilings — all previously only in the sibling repo's `.env`),
 `Makefile` (`bootstrap`/`preflight`/`verify-images`/`up`/`ch` no longer
@@ -111,7 +111,7 @@ ADR supersedes them on where the platform layer's definitions live.
 
 ## Update, 2026-09-16: the container names still collided
 
-The network rename above (`naijapay_data_network`, not `shared_data_network`)
+The network rename above (`settlement_data_network`, not `shared_data_network`)
 was only half the isolation fix. Docker enforces container-name uniqueness
 host-wide, not per compose project, so keeping `dp_postgres` / `dp_redis` /
 `dp_seaweedfs` / `dp_s3_init` / `dp_kafka` / `dp_clickhouse` identical to

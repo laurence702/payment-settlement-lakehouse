@@ -61,7 +61,7 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW__LOGGING__LOGGING_LEVEL: INFO
     PYTHONPATH: /opt/airflow/src
-    # Object store + warehouse endpoints, read by src/naijapay/config.py.
+    # Object store + warehouse endpoints, read by src/settlement/config.py.
     # 8333 is SeaweedFS's S3 port. The host still publishes it on 9000; this
     # is the container-side address, so it is 8333.
     S3_ENDPOINT: seaweedfs:8333
@@ -71,7 +71,7 @@ x-airflow-common: &airflow-common
     CLICKHOUSE_HOST: clickhouse
     CLICKHOUSE_PORT: "8123"
     DBT_VENV: /home/airflow/dbt-venv
-    DBT_PROJECT_DIR: /opt/airflow/dbt/naijapay
+    DBT_PROJECT_DIR: /opt/airflow/dbt/settlement
   volumes:
     # Long syntax: PROJECT_ROOT contains a space.
     - type: bind
@@ -408,4 +408,4 @@ volumes:
 networks:
   data_network:
     driver: bridge
-    name: naijapay_data_network
+    name: settlement_data_network

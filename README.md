@@ -1,9 +1,9 @@
-# NaijaPay Settlement Lakehouse
+# Payment Settlement Lakehouse
 
 [![tests](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-NaijaPay Settlement Lakehouse is a local, production-shaped data pipeline for
+Payment Settlement Lakehouse is a local, production-shaped data pipeline for
 reconciling **synthetic Paystack/Flutterwave-shaped events**. It models how a
 data platform can identify settlement gaps and amount discrepancies while
 preserving raw evidence, deterministic transforms, and clear data-quality
@@ -48,7 +48,7 @@ flowchart LR
     I -. raw Parquet .-> S3
     S3 -. staged Parquet .-> SP
 
-    A["Airflow 3.3.1\n(orchestration)"] -. DAG: naijapay_pipeline .-> Ingest
+    A["Airflow 3.3.1\n(orchestration)"] -. DAG: settlement_pipeline .-> Ingest
     A -. orchestrates .-> Transform
     A -. orchestrates .-> Serve
 ```
@@ -207,8 +207,8 @@ registry and replicas, plus production monitoring and deployment controls.
 
 ```text
 dags/                     Airflow orchestration
-src/naijapay/             generator, schemas, ingest, Spark, serving, checks
-dbt/naijapay/             staging models, facts, marts, and data tests
+src/settlement/             generator, schemas, ingest, Spark, serving, checks
+dbt/settlement/             staging models, facts, marts, and data tests
 docs/adr/                 architecture decisions
 scripts/                  bootstrap, preflight, demo, and verification helpers
 ```
