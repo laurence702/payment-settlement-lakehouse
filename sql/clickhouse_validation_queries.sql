@@ -1,4 +1,4 @@
--- NaijaPay ClickHouse Validation Queries
+-- Settlement Lakehouse ClickHouse Validation Queries
 -- Run these in the ClickHouse Play UI at http://localhost:8123/play
 -- or via: docker exec np_clickhouse clickhouse-client --user dataeng --password dataeng_local_only
 --
@@ -9,14 +9,14 @@
 -- 0.  ORIENTATION — what tables exist and how many rows each has
 -- ─────────────────────────────────────────────────────────────────────────────
 
-SHOW TABLES FROM naijapay;
+SHOW TABLES FROM settlement;
 
 SELECT
     table,
     formatReadableQuantity(total_rows) AS rows,
     formatReadableSize(total_bytes)    AS size
 FROM system.tables
-WHERE database = 'naijapay'
+WHERE database = 'settlement'
 ORDER BY table;
 
 
@@ -29,7 +29,7 @@ SELECT
     status,
     count()                              AS tx_count,
     round(count() * 100.0 / sum(count()) OVER (), 1) AS pct
-FROM naijapay.fct_transactions
+FROM settlement.fct_transactions
 GROUP BY status
 ORDER BY tx_count DESC;
 
@@ -38,7 +38,7 @@ SELECT
     currency,
     count()                   AS eligible_count,
     sum(amount_ngn_kobo) / 100 AS total_ngn  -- convert kobo → naira for readability
-FROM naijapay.fct_transactions
+FROM settlement.fct_transactions
 WHERE is_settlement_eligible
 GROUP BY currency;
 
@@ -46,7 +46,7 @@ GROUP BY currency;
 SELECT
     settlement_lag_days,
     count() AS merchants_tx_count
-FROM naijapay.fct_transactions
+FROM settlement.fct_transactions
 WHERE is_settlement_eligible
 GROUP BY settlement_lag_days
 ORDER BY settlement_lag_days;
@@ -56,7 +56,7 @@ SELECT
     count()                           AS total_rows,
     countDistinct(transaction_ref)    AS distinct_refs,
     total_rows - distinct_refs        AS duplicate_refs  -- must be 0
-FROM naijapay.fct_transactions;
+FROM settlement.fct_transactions;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
@@ -68,19 +68,19 @@ SELECT
     count()                     AS settlement_lines,
     countDistinct(payout_id)    AS payout_batches,
     round(count() / countDistinct(payout_id), 1) AS avg_lines_per_batch
-FROM naijapay.fct_settlements;
+FROM settlement.fct_settlements;
 
 -- 2b. Orphan settlements — settlement lines with no matching transaction
 --     Non-zero here means an ingestion gap or upstream data-quality problem.
 SELECT count() AS orphan_settlement_lines
-FROM naijapay.fct_settlements
+FROM settlement.fct_settlements
 WHERE is_orphan_settlement;
 
 -- 2c. Settlement lag distribution (days from success to settlement)
 SELECT
     settlement_lag_days,
     count() AS lines
-FROM naijapay.fct_settlements
+FROM settlement.fct_settlements
 WHERE settlement_lag_days IS NOT NULL
 GROUP BY settlement_lag_days
 ORDER BY settlement_lag_days;
@@ -90,7 +90,7 @@ SELECT
     payout_id,
     count() AS lines_in_batch,
     sum(net_kobo) / 100 AS batch_net_ngn
-FROM naijapay.fct_settlements
+FROM settlement.fct_settlements
 GROUP BY payout_id
 HAVING lines_in_batch > 1
 ORDER BY lines_in_batch DESC
@@ -106,7 +106,7 @@ SELECT
     reconciliation_status,
     count()                              AS row_count,
     round(count() * 100.0 / sum(count()) OVER (), 2) AS pct
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 GROUP BY reconciliation_status
 ORDER BY row_count DESC;
 
@@ -114,7 +114,7 @@ ORDER BY row_count DESC;
 SELECT
     source_freshness_status,
     count() AS rows
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 GROUP BY source_freshness_status;
 
 -- 3c. Amount-match check by currency
@@ -123,7 +123,7 @@ SELECT
     countIf(is_amount_matched)         AS amount_matched,
     countIf(NOT is_amount_matched AND is_settled) AS amount_mismatched,
     sum(settlement_variance_kobo) / 100 AS total_variance_ngn
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE is_settled
 GROUP BY currency;
 
@@ -138,7 +138,7 @@ SELECT
     days_since_success,
     reconciliation_status,
     reconciliation_bucket
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE reconciliation_status IN ('missing_settlement', 'unverified_source')
 ORDER BY days_since_success DESC
 LIMIT 20;
@@ -154,7 +154,7 @@ SELECT
     outstanding_net_kobo / 100 AS outstanding_ngn,
     reconciliation_status,
     payout_id
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE reconciliation_status IN ('short_paid', 'partial_settlement', 'overpaid')
 ORDER BY abs(settlement_variance_kobo) DESC
 LIMIT 20;
@@ -166,7 +166,7 @@ SELECT
     settled_at,
     succeeded_at,
     outstanding_net_kobo / 100 AS outstanding_ngn
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE reconciliation_status = 'reversed_after_settlement'
 LIMIT 10;
 
@@ -175,7 +175,7 @@ SELECT
     reconciliation_bucket,
     count()                              AS rows,
     round(count() * 100.0 / sum(count()) OVER (), 2) AS pct
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 GROUP BY reconciliation_bucket
 ORDER BY rows DESC;
 
@@ -187,22 +187,22 @@ ORDER BY rows DESC;
 -- 4a. Grain check: mart row count must equal eligible + reversed-with-settlement
 --     If this returns non-zero, a load is stale.
 SELECT
-    (SELECT count() FROM naijapay.mart_settlement_reconciliation)
+    (SELECT count() FROM settlement.mart_settlement_reconciliation)
     -
-    (SELECT count() FROM naijapay.fct_transactions
+    (SELECT count() FROM settlement.fct_transactions
      WHERE is_settlement_eligible
         OR (is_reversed AND transaction_ref IN
-            (SELECT transaction_ref FROM naijapay.fct_settlements)))
+            (SELECT transaction_ref FROM settlement.fct_settlements)))
     AS row_delta;  -- must be 0
 
 -- 4b. Integrity: matched rows must have zero outstanding balance
 SELECT count() AS violations
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE is_amount_matched AND outstanding_net_kobo != 0;  -- must be 0
 
 -- 4c. Matched rows must not carry a variance
 SELECT count() AS inconsistent_matched_rows
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE reconciliation_status = 'matched'
   AND (settlement_variance_kobo != 0
     OR outstanding_net_kobo != 0
@@ -210,10 +210,10 @@ WHERE reconciliation_status = 'matched'
 
 -- 4d. Every settled row in the mart should have a matching settlement line
 SELECT count() AS mart_settled_rows_without_settlement_line
-FROM naijapay.mart_settlement_reconciliation r
+FROM settlement.mart_settlement_reconciliation r
 WHERE r.is_settled
   AND NOT EXISTS (
-      SELECT 1 FROM naijapay.fct_settlements s
+      SELECT 1 FROM settlement.fct_settlements s
       WHERE s.transaction_ref = r.transaction_ref
   );  -- should be 0
 
@@ -227,7 +227,7 @@ SELECT
     currency,
     sum(outstanding_net_kobo) / 100 AS total_outstanding_ngn,
     count()                          AS unsettled_tx_count
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 WHERE reconciliation_status IN ('missing_settlement', 'short_paid',
                                  'partial_settlement', 'unverified_source')
 GROUP BY currency;
@@ -239,7 +239,7 @@ SELECT
     countIf(reconciliation_status = 'missing_settlement')  AS missing,
     countIf(reconciliation_status = 'short_paid')          AS short_paid,
     sum(outstanding_net_kobo) / 100                        AS total_outstanding_ngn
-FROM naijapay.mart_settlement_reconciliation
+FROM settlement.mart_settlement_reconciliation
 GROUP BY merchant_id
 ORDER BY total_outstanding_ngn DESC
 LIMIT 15;
@@ -249,6 +249,6 @@ SELECT
     toDate(settled_at)   AS settlement_day,
     count()              AS lines_settled,
     sum(net_kobo) / 100  AS total_settled_ngn
-FROM naijapay.fct_settlements
+FROM settlement.fct_settlements
 GROUP BY settlement_day
 ORDER BY settlement_day;
