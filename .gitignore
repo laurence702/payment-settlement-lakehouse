@@ -6,8 +6,8 @@ __pycache__/
 venv/
 logs/
 dbt/*/target/
-dbt/settlement/dbt_packages/
-dbt/settlement/logs/
+dbt/*/dbt_packages/
+dbt/*/logs/
 data/local/
 *.duckdb
 *.duckdb.wal
