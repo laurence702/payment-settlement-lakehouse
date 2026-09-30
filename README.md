@@ -1,9 +1,9 @@
-# Settlement Settlement Lakehouse
+# Payment Settlement Lakehouse
 
 [![tests](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Settlement Settlement Lakehouse is a local, production-shaped data pipeline for
+Payment Settlement Lakehouse is a local, production-shaped data pipeline for
 reconciling **synthetic Paystack/Flutterwave-shaped events**. It models how a
 data platform can identify settlement gaps and amount discrepancies while
 preserving raw evidence, deterministic transforms, and clear data-quality
