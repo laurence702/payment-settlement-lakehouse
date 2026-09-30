@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import collections
 
-from naijapay.generate import _fee_kobo, generate_events
-from naijapay.schemas import Channel, Status
+from settlement.generate import _fee_kobo, generate_events
+from settlement.schemas import Channel, Status
 
 
 def test_deterministic_for_a_given_seed():

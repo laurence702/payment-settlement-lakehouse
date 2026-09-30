@@ -11,7 +11,7 @@ pytestmark = pytest.mark.slow
 
 
 def test_dedupe_and_collapse_to_one_row_per_transaction(spark, raw_parquet_dir, tmp_path, events):
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     tx, _ = events
     expected_refs = len({e["transaction_ref"] for e in tx})
@@ -30,7 +30,7 @@ def test_latest_status_wins_including_out_of_order(spark, raw_parquet_dir, tmp_p
     Events arrive shuffled, and ~5% of charges emit their terminal event before
     their pending event. Ordering by arrival would leave those stuck in pending.
     """
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     tx, _ = events
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "out")
@@ -57,7 +57,7 @@ def test_latest_status_wins_including_out_of_order(spark, raw_parquet_dir, tmp_p
 def test_no_transaction_is_left_pending_when_a_terminal_event_exists(
     spark, raw_parquet_dir, tmp_path, events
 ):
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     tx, _ = events
     has_terminal = {
@@ -76,7 +76,7 @@ def test_no_transaction_is_left_pending_when_a_terminal_event_exists(
 
 
 def test_usd_amounts_are_converted_to_naira(spark, raw_parquet_dir, tmp_path):
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "out")
     staged = spark.read.parquet((tmp_path / "out").as_posix())
@@ -101,7 +101,7 @@ def test_usd_amounts_are_converted_to_naira(spark, raw_parquet_dir, tmp_path):
 
 
 def test_settlements_are_deduplicated(spark, raw_parquet_dir, tmp_path, events):
-    from naijapay.transform_spark import transform_settlements
+    from settlement.transform_spark import transform_settlements
 
     _, stl = events
     metrics = transform_settlements(spark, raw_parquet_dir / "settlements", tmp_path / "stl")
@@ -109,7 +109,7 @@ def test_settlements_are_deduplicated(spark, raw_parquet_dir, tmp_path, events):
 
 
 def test_staged_transactions_expose_expected_settlement_dates(spark, raw_parquet_dir, tmp_path):
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "out")
     rows = spark.read.parquet((tmp_path / "out").as_posix()).select(
@@ -136,7 +136,7 @@ def test_output_is_reproducible(spark, raw_parquet_dir, tmp_path):
     an updated_at resolve non-deterministically and the marts change between
     runs for no reason.
     """
-    from naijapay.transform_spark import transform_transactions
+    from settlement.transform_spark import transform_transactions
 
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "a")
     transform_transactions(spark, raw_parquet_dir / "transactions", tmp_path / "b")

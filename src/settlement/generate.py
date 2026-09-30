@@ -24,7 +24,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-from naijapay.schemas import (
+from settlement.schemas import (
     BANKS,
     FAILURE_REASONS,
     MERCHANT_CATEGORIES,
@@ -407,7 +407,7 @@ def main() -> None:
             print(f"wrote {path} ({len(rows)} rows)")
         return
 
-    from naijapay.config import get_settings
+    from settlement.config import get_settings
 
     s = get_settings()
     bootstrap = args.bootstrap or s.kafka_bootstrap

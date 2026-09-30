@@ -28,7 +28,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 
-from naijapay.config import Settings, get_settings
+from settlement.config import Settings, get_settings
 
 
 @dataclass(frozen=True)

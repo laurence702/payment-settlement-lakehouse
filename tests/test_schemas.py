@@ -1,4 +1,4 @@
-from naijapay.schemas import (
+from settlement.schemas import (
     BANKS,
     STATUS_RANK,
     TERMINAL_STATUSES,

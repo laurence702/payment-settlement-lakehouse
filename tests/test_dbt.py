@@ -20,7 +20,7 @@ import pytest
 
 pytestmark = pytest.mark.slow
 
-PROJECT_DIR = Path(__file__).resolve().parents[1] / "dbt" / "naijapay"
+PROJECT_DIR = Path(__file__).resolve().parents[1] / "dbt" / "settlement"
 
 
 def _dbt_bin() -> str:
