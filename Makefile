@@ -133,6 +133,6 @@ lint:  ## ruff
 	@.venv/bin/ruff format --check src tests dags
 
 clean:  ## Remove local build and test artefacts
-	@rm -rf .pytest_cache .ruff_cache dbt/settlement/target dbt/settlement/logs \
-	  dbt/settlement/dbt_packages *.duckdb *.duckdb.wal
+	@rm -rf .pytest_cache .ruff_cache dbt/*/target dbt/*/logs \
+	  dbt/*/dbt_packages *.duckdb *.duckdb.wal
 	@find . -name __pycache__ -type d -prune -exec rm -rf {} +
