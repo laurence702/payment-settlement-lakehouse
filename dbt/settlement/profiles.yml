@@ -1,6 +1,6 @@
 # Checked in on purpose: no secrets, only env_var lookups. Real credentials come
 # from the Airflow container's environment.
-naijapay:
+settlement:
   target: "{{ env_var('DBT_TARGET', 'local') }}"
   outputs:
     # Normal path: DuckDB reading and writing the S3 object store over httpfs.
@@ -9,7 +9,7 @@ naijapay:
       # Ephemeral catalog. All persistent state is Parquet in object storage; this file
       # is scratch and safe to delete between runs. That is what stops DuckDB
       # from becoming a single-writer bottleneck pretending to be a warehouse.
-      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/naijapay.duckdb') }}"
+      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/settlement.duckdb') }}"
       threads: 4
       extensions:
         - httpfs
@@ -26,5 +26,5 @@ naijapay:
     # makes the SQL testable in CI without standing up an object store.
     localfs:
       type: duckdb
-      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/naijapay.duckdb') }}"
+      path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/settlement.duckdb') }}"
       threads: 4

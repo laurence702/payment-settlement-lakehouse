@@ -1,32 +1,30 @@
-"""Synthetic Paystack/Flutterwave-shaped payment events.
+"""Generate deterministic synthetic Paystack/Flutterwave-shaped payment events.
 
-The point of this generator is NOT to make pretty data. It is to manufacture,
-deterministically, the four things that make payments data genuinely hard and
-that a clean synthetic dataset would hide:
+The dataset includes payment-data conditions that reconciliation must handle:
 
   1. Multiple events per transaction. A charge emits pending, then a terminal
-     status. Downstream must collapse them to one row, latest wins.
+     status. Downstream must collapse them to one row.
   2. Duplicates. At-least-once delivery means the same event_id shows up twice.
   3. Out-of-order arrival. The terminal event sometimes lands before the
      pending event it supersedes, so ordering by arrival is wrong.
   4. Missing settlements. A few percent of successful charges never settle.
-     Finding those is the actual business question this pipeline answers.
+     The reconciliation mart identifies their expected outstanding amount.
 
 Everything here is stdlib only and seeded, so the tests can assert on exact
 counts without Kafka, pyarrow, or a network.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
-UTC = timezone.utc
-
-from naijapay.schemas import (
+from settlement.schemas import (
     BANKS,
     FAILURE_REASONS,
     MERCHANT_CATEGORIES,
@@ -38,19 +36,22 @@ from naijapay.schemas import (
 # Per-channel behaviour, loosely modelled on published Nigerian PSP figures:
 # USSD and QR fail more than card, bank transfer is slowest to confirm.
 CHANNEL_PROFILE: dict[str, dict[str, float]] = {
-    Channel.CARD:          {"weight": 0.46, "success": 0.88, "confirm_secs": 12},
+    Channel.CARD: {"weight": 0.46, "success": 0.88, "confirm_secs": 12},
     Channel.BANK_TRANSFER: {"weight": 0.31, "success": 0.94, "confirm_secs": 90},
-    Channel.USSD:          {"weight": 0.15, "success": 0.79, "confirm_secs": 45},
-    Channel.QR:            {"weight": 0.08, "success": 0.83, "confirm_secs": 20},
+    Channel.USSD: {"weight": 0.15, "success": 0.79, "confirm_secs": 45},
+    Channel.QR: {"weight": 0.08, "success": 0.83, "confirm_secs": 20},
 }
 
-DUPLICATE_RATE = 0.02       # at-least-once redelivery
-OUT_OF_ORDER_RATE = 0.05    # terminal event overtakes its own pending event
-REVERSAL_RATE = 0.012       # success later reversed (chargeback / failed payout)
-UNSETTLED_RATE = 0.031      # successful but never settled: the reconciliation gap
-USD_RATE = 0.04             # share of card charges denominated in USD
+DUPLICATE_RATE = 0.02  # at-least-once redelivery
+OUT_OF_ORDER_RATE = 0.05  # terminal event overtakes its own pending event
+REVERSAL_RATE = 0.012  # success later reversed (chargeback / failed payout)
+UNSETTLED_RATE = 0.031  # successful but never settled: the reconciliation gap
+USD_RATE = 0.04  # share of card charges denominated in USD
+PARTIAL_SETTLEMENT_RATE = 0.006
+SHORT_PAYMENT_RATE = 0.008
+OVERPAYMENT_RATE = 0.004
 
-NGN_PER_USD = 1_615.0       # static on purpose; a real pipeline joins an fx table
+NGN_PER_USD = 1_615.0  # static on purpose; a real pipeline joins an fx table
 
 
 @dataclass(frozen=True)
@@ -92,9 +93,14 @@ def _amount_kobo(rng: random.Random, category: str) -> int:
     percentile metric downstream meaningless.
     """
     base = {
-        "utilities": 8.4, "food_delivery": 8.2, "digital_services": 8.0,
-        "ecommerce": 9.2, "logistics": 8.6, "education": 10.4,
-        "travel": 10.8, "healthcare": 9.6,
+        "utilities": 8.4,
+        "food_delivery": 8.2,
+        "digital_services": 8.0,
+        "ecommerce": 9.2,
+        "logistics": 8.6,
+        "education": 10.4,
+        "travel": 10.8,
+        "healthcare": 9.6,
     }.get(category, 9.0)
     naira = rng.lognormvariate(base, 0.85)
     return int(min(max(naira, 100.0), 8_000_000.0) * 100)
@@ -120,6 +126,7 @@ def generate_events(
     days: int,
     seed: int,
     end_date: date | None = None,
+    settlement_source_delay_days: int = 0,
 ) -> tuple[list[dict], list[dict]]:
     """Return (transaction_events, settlement_events).
 
@@ -128,6 +135,9 @@ def generate_events(
     rng = random.Random(seed)
     merchants = build_merchants(rng)
     end = end_date or datetime.now(UTC).date()
+    source_watermark = datetime.combine(
+        end + timedelta(days=2 - settlement_source_delay_days), datetime.max.time(), tzinfo=UTC
+    )
     window_start = datetime.combine(end - timedelta(days=days), datetime.min.time(), tzinfo=UTC)
 
     tx_events: list[dict] = []
@@ -142,7 +152,32 @@ def generate_events(
         day_offset = rng.uniform(0, days)
         hour_bias = rng.choices(
             range(24),
-            weights=[1, 1, 1, 1, 1, 2, 4, 7, 9, 10, 11, 12, 13, 13, 12, 12, 13, 15, 16, 14, 11, 7, 4, 2],
+            weights=[
+                1,
+                1,
+                1,
+                1,
+                1,
+                2,
+                4,
+                7,
+                9,
+                10,
+                11,
+                12,
+                13,
+                13,
+                12,
+                12,
+                13,
+                15,
+                16,
+                14,
+                11,
+                7,
+                4,
+                2,
+            ],
             k=1,
         )[0]
         created = window_start + timedelta(
@@ -163,23 +198,41 @@ def generate_events(
         gateway = rng.choice(Gateway.ALL)
         customer = f"CUS_{rng.randrange(10**6):06d}"
 
-        def base_event(status: str, ts: datetime, reason: str | None = None) -> dict:
+        def base_event(
+            status: str,
+            ts: datetime,
+            reason: str | None = None,
+            _ref: str = ref,
+            _merchant_id: str = merchant.merchant_id,
+            _customer: str = customer,
+            _gateway: str = gateway,
+            _channel: str = channel,
+            _bank: str | None = bank,
+            _amount: int = amount,
+            _fee: int = fee,
+            _currency: str = currency,
+            _fx: float | None = fx,
+            _created: datetime = created,
+            _settlement_lag_days: int = merchant.settlement_lag_days,
+        ) -> dict:
             return {
                 "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
                 "event_ts": ts.isoformat(),
-                "transaction_ref": ref,
-                "merchant_id": merchant.merchant_id,
-                "customer_id": customer,
-                "gateway": gateway,
-                "channel": channel,
-                "bank_code": bank,
+                "transaction_ref": _ref,
+                "merchant_id": _merchant_id,
+                "customer_id": _customer,
+                "gateway": _gateway,
+                "channel": _channel,
+                "bank_code": _bank,
                 "status": status,
-                "amount_kobo": amount,
-                "fee_kobo": fee,
-                "currency": currency,
-                "fx_rate_to_ngn": fx,
+                "amount_kobo": _amount,
+                "fee_kobo": _fee,
+                "currency": _currency,
+                "fx_rate_to_ngn": _fx,
                 "failure_reason": reason,
-                "created_at": created.isoformat(),
+                "settlement_lag_days": _settlement_lag_days,
+                "settlement_source_watermark_at": source_watermark.isoformat(),
+                "created_at": _created.isoformat(),
                 "updated_at": ts.isoformat(),
             }
 
@@ -188,9 +241,7 @@ def generate_events(
 
         # 2. terminal
         settled_ok = rng.random() < profile["success"]
-        confirm = created + timedelta(
-            seconds=profile["confirm_secs"] * rng.uniform(0.4, 3.0)
-        )
+        confirm = created + timedelta(seconds=profile["confirm_secs"] * rng.uniform(0.4, 3.0))
         if settled_ok:
             terminal = base_event(Status.SUCCESS, confirm)
         else:
@@ -203,23 +254,22 @@ def generate_events(
         tx_events.extend(pair)
 
         # 4. late reversal of an earlier success
-        reversed_later = False
         if settled_ok and rng.random() < REVERSAL_RATE:
             rev_ts = confirm + timedelta(hours=rng.uniform(6, 96))
             tx_events.append(base_event(Status.REVERSED, rev_ts, "chargeback"))
-            reversed_later = True
 
         # 5. duplicate redelivery of a random event in this transaction
         if rng.random() < DUPLICATE_RATE:
             tx_events.append(dict(rng.choice(pair)))
 
-        # 6. settlement, for successes that were not reversed and did not fall
-        #    into the unsettled gap
-        if settled_ok and not reversed_later and rng.random() > UNSETTLED_RATE:
+        # 6. Settlement lines are grouped into merchant/date payout batches.
+        # A late reversal may follow a settlement and must remain visible to
+        # reconciliation rather than being silently treated as an ordinary gap.
+        if settled_ok and rng.random() > UNSETTLED_RATE:
             sdate = (confirm + timedelta(days=merchant.settlement_lag_days)).date()
-            settled_at = datetime.combine(
-                sdate, datetime.min.time(), tzinfo=UTC
-            ) + timedelta(hours=rng.uniform(9, 17))
+            settled_at = datetime.combine(sdate, datetime.min.time(), tzinfo=UTC) + timedelta(
+                hours=rng.uniform(9, 17)
+            )
             # Re-sample the FX rate at settlement time rather than reusing the
             # charge-time `fx`. Settlement lands days after the charge, and a
             # real PSP settles at whatever rate is current then, not the rate
@@ -227,21 +277,31 @@ def generate_events(
             # provably zero for every row (both sides truncated the identical
             # amount * fx product) instead of the small, real drift the mart and
             # quality.py's soft check both expect and are built to tolerate.
-            settlement_fx = (
-                NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
-            )
+            settlement_fx = NGN_PER_USD * rng.uniform(0.985, 1.015) if currency == "USD" else None
             gross = amount if currency == "NGN" else int(amount * settlement_fx)
             gross_fee = fee if currency == "NGN" else int(fee * settlement_fx)
+            expected_net = gross - gross_fee
+            adjustment = rng.random()
+            if adjustment < PARTIAL_SETTLEMENT_RATE:
+                settled_net = expected_net // 2
+            elif adjustment < PARTIAL_SETTLEMENT_RATE + SHORT_PAYMENT_RATE:
+                settled_net = max(0, expected_net - max(1, expected_net // 100))
+            elif adjustment < PARTIAL_SETTLEMENT_RATE + SHORT_PAYMENT_RATE + OVERPAYMENT_RATE:
+                settled_net = expected_net + max(1, expected_net // 100)
+            else:
+                settled_net = expected_net
+            gross = settled_net + gross_fee
             settlements.append(
                 {
                     "event_id": str(uuid.UUID(int=rng.getrandbits(128))),
                     "event_ts": settled_at.isoformat(),
                     "settlement_id": f"STL_{uuid.UUID(int=rng.getrandbits(128)).hex[:14]}",
+                    "payout_id": f"PYO_{merchant.merchant_id}_{sdate:%Y%m%d}",
                     "merchant_id": merchant.merchant_id,
                     "transaction_ref": ref,
                     "gross_kobo": gross,
                     "fee_kobo": gross_fee,
-                    "net_kobo": gross - gross_fee,
+                    "net_kobo": settled_net,
                     "currency": "NGN",
                     "settlement_date": sdate.isoformat(),
                     "settled_at": settled_at.isoformat(),
@@ -309,10 +369,8 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
                 # Guard with its own try/except: poll() itself can raise
                 # BufferError when the queue is still saturated, which would
                 # otherwise escape the retry loop.
-                try:
+                with contextlib.suppress(BufferError):
                     producer.poll(0.5)
-                except BufferError:
-                    pass
         # Poll every 100 messages (not 1000) to keep the in-flight window
         # drained and avoid hitting queue limits mid-batch.
         if i % 100 == 0:
@@ -349,7 +407,7 @@ def main() -> None:
             print(f"wrote {path} ({len(rows)} rows)")
         return
 
-    from naijapay.config import get_settings
+    from settlement.config import get_settings
 
     s = get_settings()
     bootstrap = args.bootstrap or s.kafka_bootstrap

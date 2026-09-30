@@ -29,9 +29,9 @@ step "creating kafka topics"
 ./scripts/create-topics.sh
 
 step "unpausing and triggering the DAG"
-docker exec np_airflow_scheduler airflow dags unpause naijapay_pipeline >/dev/null
+docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline >/dev/null
 RUN_ID="demo__$(date -u +%Y%m%dT%H%M%S)"
-docker exec np_airflow_scheduler airflow dags trigger naijapay_pipeline --run-id "$RUN_ID"
+docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline --run-id "$RUN_ID"
 
 step "waiting for the run to finish (generate, ingest, spark, dbt, clickhouse)"
 echo "  follow along at http://localhost:${PORT_AIRFLOW}"
@@ -48,10 +48,10 @@ echo "  follow along at http://localhost:${PORT_AIRFLOW}"
 run_state() {
   local out
   out=$(docker exec np_airflow_scheduler \
-          airflow dags list-runs naijapay_pipeline --state failed -o plain 2>/dev/null || true)
+          airflow dags list-runs settlement_pipeline --state failed -o plain 2>/dev/null || true)
   case "$out" in *"$RUN_ID"*) printf 'failed'; return ;; esac
   out=$(docker exec np_airflow_scheduler \
-          airflow dags list-runs naijapay_pipeline --state success -o plain 2>/dev/null || true)
+          airflow dags list-runs settlement_pipeline --state success -o plain 2>/dev/null || true)
   case "$out" in *"$RUN_ID"*) printf 'success'; return ;; esac
   printf 'running'
 }
@@ -63,7 +63,7 @@ for i in $(seq 1 120); do
     failed)
       echo "  FAILED. Per-task state:"
       docker exec np_airflow_scheduler \
-        airflow tasks states-for-dag-run naijapay_pipeline "$RUN_ID" || true
+        airflow tasks states-for-dag-run settlement_pipeline "$RUN_ID" || true
       echo
       echo "  Open http://localhost:${PORT_AIRFLOW} and click the red task, then Logs."
       exit 1 ;;

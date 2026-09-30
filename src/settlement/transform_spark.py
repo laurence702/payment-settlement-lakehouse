@@ -15,7 +15,7 @@ Scope, stated plainly because it matters more than the code:
   processed, and staged back up. On a real cluster you would delete the two
   pyarrow calls and pass an s3a:// path. See the ADR.
 
-What this stage actually fixes:
+This stage addresses:
 
   * Duplicate delivery. Kafka is at-least-once; the same event_id appears twice.
   * Multiple events per transaction. pending then success is two rows for one
@@ -25,18 +25,18 @@ What this stage actually fixes:
     updated_at, with a deterministic status-rank tiebreak so a rerun on the same
     input produces byte-identical output.
 """
+
 from __future__ import annotations
 
 import argparse
+import contextlib
 import shutil
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-UTC = timezone.utc
-
-from naijapay.config import Settings, get_settings
-from naijapay.schemas import STATUS_RANK
+from settlement.config import Settings, get_settings
+from settlement.schemas import STATUS_RANK
 
 
 def _s3(settings: Settings):
@@ -63,7 +63,8 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
     for info in s3.get_file_info(selector):
         if info.type != pafs.FileType.File or not info.path.endswith(".parquet"):
             continue
-        local = dest / f"{n:05d}_{Path(info.path).name}"
+        safe_name = info.path.replace("/", "_")
+        local = dest / f"{n:05d}_{safe_name}"
         with s3.open_input_stream(info.path) as src, local.open("wb") as out:
             shutil.copyfileobj(src, out)
         n += 1
@@ -72,10 +73,8 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
     s3 = _s3(settings)
-    try:
+    with contextlib.suppress(Exception):
         s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
-    except Exception:
-        pass
     n = 0
     for local in sorted(src_dir.rglob("*.parquet")):
         rel = local.relative_to(src_dir).as_posix()
@@ -89,12 +88,12 @@ def build_session(driver_memory: str, shuffle_partitions: int):
     from pyspark.sql import SparkSession
 
     return (
-        SparkSession.builder.appName("naijapay-raw-to-staged")
+        SparkSession.builder.appName("settlement-raw-to-staged")
         # local[2] instead of local[*]: all executor threads share the single
         # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
         # peak RSS of concurrent window-function shuffles exceeds the limit.
-        # Two threads halves the in-flight memory at a ~30 % speed cost that
-        # is irrelevant on a portfolio demo stack.
+        # Two threads halve in-flight memory at a modest throughput cost, which
+        # keeps the local pipeline within its 6 GB memory envelope.
         .master("local[2]")
         .config("spark.driver.memory", driver_memory)
         # The default of 200 shuffle partitions on a laptop produces 200 tiny
@@ -119,27 +118,27 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
     raw = spark.read.parquet(in_dir.as_posix())
     raw_count = raw.count()
 
-    # 1. Drop exact redeliveries. event_id is the producer's idempotency key.
-    deduped = raw.dropDuplicates(["event_id"])
+    # 1. Drop exact redeliveries per transaction. event_id is the producer's idempotency key.
+    deduped = raw.dropDuplicates(["transaction_ref", "event_id"])
     after_dedupe = deduped.count()
 
     # 2. Collapse the event stream to one row per transaction, latest wins.
     #    The status_rank tiebreak makes this deterministic when two events for
     #    one reference share an updated_at, which happens when a producer emits
     #    a pending and a terminal status inside the same clock tick.
-    rank_expr = F.create_map(
-        *[x for k, v in STATUS_RANK.items() for x in (F.lit(k), F.lit(v))]
+    rank_expr = F.create_map(*[x for k, v in STATUS_RANK.items() for x in (F.lit(k), F.lit(v))])
+    transaction_window = Window.partitionBy("transaction_ref")
+    successful_at = F.max(F.when(F.col("status") == "success", F.col("updated_at"))).over(
+        transaction_window
     )
-    ranked = deduped.withColumn("status_rank", rank_expr[F.col("status")])
+    ranked = deduped.withColumn("status_rank", rank_expr[F.col("status")]).withColumn(
+        "successful_at", successful_at
+    )
 
     w = Window.partitionBy("transaction_ref").orderBy(
         F.col("updated_at").desc(), F.col("status_rank").desc(), F.col("event_id").desc()
     )
-    latest = (
-        ranked.withColumn("_rn", F.row_number().over(w))
-        .filter(F.col("_rn") == 1)
-        .drop("_rn")
-    )
+    latest = ranked.withColumn("_rn", F.row_number().over(w)).filter(F.col("_rn") == 1).drop("_rn")
 
     # 3. Derived columns the marts need and should not each recompute.
     staged = (
@@ -147,7 +146,9 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
             "amount_ngn_kobo",
             F.when(
                 F.col("currency") == "USD",
-                (F.col("amount_kobo") * F.coalesce(F.col("fx_rate_to_ngn"), F.lit(0.0))).cast("long"),
+                (F.col("amount_kobo") * F.coalesce(F.col("fx_rate_to_ngn"), F.lit(0.0))).cast(
+                    "long"
+                ),
             ).otherwise(F.col("amount_kobo")),
         )
         .withColumn(
@@ -166,6 +167,13 @@ def transform_transactions(spark, in_dir: Path, out_dir: Path) -> dict:
         )
         .withColumn("is_terminal", F.col("status").isin("success", "failed", "reversed"))
         .withColumn("event_date", F.to_date("created_at"))
+        .withColumn(
+            "expected_settlement_date",
+            F.date_add(
+                F.to_date(F.coalesce(F.col("successful_at"), F.col("updated_at"))),
+                F.col("settlement_lag_days"),
+            ),
+        )
         .withColumn("processed_at", F.lit(datetime.now(UTC)).cast("timestamp"))
         .drop("status_rank")
     )
@@ -189,9 +197,8 @@ def transform_settlements(spark, in_dir: Path, out_dir: Path) -> dict:
 
     raw = spark.read.parquet(in_dir.as_posix())
     raw_count = raw.count()
-    staged = (
-        raw.dropDuplicates(["event_id"])
-        .withColumn("processed_at", F.lit(datetime.now(UTC)).cast("timestamp"))
+    staged = raw.dropDuplicates(["settlement_id", "transaction_ref"]).withColumn(
+        "processed_at", F.lit(datetime.now(UTC)).cast("timestamp")
     )
     out_count = staged.count()
     staged.repartition("settlement_date").write.mode("overwrite").partitionBy(
@@ -208,7 +215,7 @@ def run(settings: Settings, driver_memory: str, shuffle_partitions: int) -> dict
     spark = build_session(driver_memory, shuffle_partitions)
     metrics: dict = {}
     try:
-        with tempfile.TemporaryDirectory(prefix="naijapay-spark-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="settlement-spark-") as tmp:
             root = Path(tmp)
             for dataset, fn, out_prefix in (
                 ("transactions", transform_transactions, "transactions"),

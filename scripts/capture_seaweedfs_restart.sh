@@ -11,7 +11,7 @@
 # restart, not just after it.
 #
 # Does NOT trigger the DAG itself -- start this running first, then
-# trigger naijapay_pipeline from the Airflow UI as usual. Stops after
+# trigger settlement_pipeline from the Airflow UI as usual. Stops after
 # TIMEOUT_SECS (default 360s / 6 min) or Ctrl+C.
 #
 # Usage: bash scripts/capture_seaweedfs_restart.sh [timeout_secs]

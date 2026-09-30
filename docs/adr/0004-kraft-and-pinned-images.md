@@ -32,7 +32,7 @@ minutes into a pull.
 
 **Topic auto-creation is off.** Topics are created explicitly with declared
 partition counts. Auto-create is convenient until a typo in a producer silently
-creates `naijapay.transacton.v1` with one partition and nobody notices.
+creates `settlement.transaction.v1` with one partition and nobody notices.
 
 ## Consequences
 

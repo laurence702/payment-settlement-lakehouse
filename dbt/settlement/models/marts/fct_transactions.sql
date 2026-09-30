@@ -24,9 +24,13 @@ select
     fx_rate_to_ngn,
     created_at,
     updated_at,
+    successful_at,
     ingested_at,
     event_date,
     arrival_lag_seconds,
+    settlement_lag_days,
+    expected_settlement_date,
+    settlement_source_watermark_at,
     is_success,
     is_reversed,
     is_settlement_eligible
