@@ -1,7 +1,7 @@
-name: naijapay
+name: settlement
 version: 0.2.0
 config-version: 2
-profile: naijapay
+profile: settlement
 
 model-paths: ["models"]
 macro-paths: ["macros"]
@@ -27,7 +27,7 @@ vars:
   marts_location: "s3://lakehouse-marts"
 
 models:
-  naijapay:
+  settlement:
     staging:
       # Views over the Parquet in object storage. Nothing is copied; DuckDB reads the
       # object store directly via httpfs.

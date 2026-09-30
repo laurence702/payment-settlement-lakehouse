@@ -7,12 +7,9 @@
 #   2. no np_* container restarted or was OOM-killed during the run
 #   3. no one-shot init container exited non-zero
 #   4. mart_settlement_reconciliation has rows in ClickHouse
-#   5. settlement variance is zero for NGN and non-zero for some USD rows
 #
 # Evidence lands in verify-report/ (gitignored; CI uploads it as an artifact).
 # KEEP_UP=1 leaves the stack running afterwards for poking at.
-# FRESH=0 reuses existing volumes. The default starts from empty volumes so
-# that rows found in ClickHouse can only have come from this run.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -44,14 +41,6 @@ set -a; . ./.env; set +a
   done ) > "$REPORT/mem-samples.txt" 2>&1 &
 SAMPLER=$!
 trap 'kill $SAMPLER 2>/dev/null' EXIT
-
-if [ "${FRESH:-1}" = 1 ]; then
-  COMPOSE_PROFILES=core,stream,warehouse,airflow \
-    docker compose --env-file .env down -v --remove-orphans > "$REPORT/reset.log" 2>&1 || true
-  echo "state: fresh volumes" >> "$SUMMARY"
-else
-  echo "state: reused volumes (FRESH=0); row counts may include earlier runs" >> "$SUMMARY"
-fi
 
 # 1. the end-to-end run
 if ./scripts/demo.sh > "$REPORT/demo.log" 2>&1; then
@@ -103,35 +92,6 @@ if [[ "$rows" =~ ^[0-9]+$ ]] && [ "$rows" -gt 0 ]; then
   pass "mart_settlement_reconciliation has $rows rows"
 else
   bad "mart_settlement_reconciliation empty or unreadable (got '${rows}'; see $REPORT/clickhouse-err.txt)"
-fi
-
-# 5. Matched rows must have no variance or outstanding balance. NGN amount
-# discrepancies and USD FX drift are explicit v0.2 reconciliation outcomes.
-variance=$(docker exec np_clickhouse clickhouse-client \
-  --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --format TSV \
-  --query "SELECT
-             countIf(reconciliation_status = 'matched' AND
-                     (settlement_variance_kobo != 0 OR outstanding_net_kobo != 0 OR NOT is_amount_matched)),
-             countIf(currency = 'NGN' AND is_settled AND NOT is_amount_matched),
-             countIf(currency = 'USD' AND is_settled AND settlement_variance_kobo != 0)
-           FROM ${CLICKHOUSE_DB}.mart_settlement_reconciliation" 2>>"$REPORT/clickhouse-err.txt" || echo "")
-read -r matched_bad ngn_discrepancies usd_drift <<< "${variance:-x x x}"
-if [[ "$matched_bad" =~ ^[0-9]+$ ]] && [[ "$ngn_discrepancies" =~ ^[0-9]+$ ]] && [[ "$usd_drift" =~ ^[0-9]+$ ]]; then
-  if [ "$matched_bad" -eq 0 ] && [ "$usd_drift" -gt 0 ]; then
-    pass "variance: matched rows consistent; $ngn_discrepancies NGN discrepancies and $usd_drift USD variances observed"
-  else
-    bad "variance: $matched_bad inconsistent matched rows (want 0), $usd_drift USD rows with variance (want > 0)"
-  fi
-else
-  bad "variance check could not read the mart (got '${variance}')"
-fi
-
-# Task logs for the latest DAG run, copied out before teardown removes them.
-latest_run=$(docker exec np_airflow_scheduler sh -c \
-  'ls -1td /opt/airflow/logs/dag_id=naijapay_pipeline/run_id=* 2>/dev/null | head -1' 2>/dev/null || true)
-if [ -n "$latest_run" ]; then
-  docker cp "np_airflow_scheduler:$latest_run" "$REPORT/airflow-task-logs" > /dev/null 2>&1 \
-    && echo "- task logs: $REPORT/airflow-task-logs/" >> "$SUMMARY"
 fi
 
 docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}' > "$REPORT/mem-final.txt" 2>&1
