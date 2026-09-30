@@ -12,8 +12,8 @@ table does.
 
 from __future__ import annotations
 
-from naijapay.config import Settings, get_settings
-from naijapay.serve import MARTS, _client
+from settlement.config import Settings, get_settings
+from settlement.serve import MARTS, _client
 
 
 def run_checks(settings: Settings) -> tuple[list[dict], list[dict]]:

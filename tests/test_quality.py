@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from naijapay.config import Settings
+from settlement.config import Settings
 
 
 class _Client:
@@ -47,7 +47,7 @@ class _Client:
 
 
 def test_quality_accepts_explicit_amount_discrepancies(monkeypatch):
-    from naijapay import quality
+    from settlement import quality
 
     monkeypatch.setattr(quality, "_client", lambda _: _Client())
     hard, soft = quality.run_checks(Settings())
@@ -64,7 +64,7 @@ def test_quality_accepts_explicit_amount_discrepancies(monkeypatch):
 
 
 def test_quality_rejects_inconsistent_matched_rows(monkeypatch):
-    from naijapay import quality
+    from settlement import quality
 
     monkeypatch.setattr(quality, "_client", lambda _: _Client(matched_inconsistencies=1))
     hard, _ = quality.run_checks(Settings())
@@ -77,7 +77,7 @@ def test_quality_rejects_grain_mismatch(monkeypatch):
     grain (eligible + reversed-with-settlement).  A mismatch means one of the
     two loads is stale.
     """
-    from naijapay import quality
+    from settlement import quality
 
     monkeypatch.setattr(quality, "_client", lambda _: _Client(grain_mismatch=True))
     hard, _ = quality.run_checks(Settings())
@@ -89,7 +89,7 @@ def test_quality_passes_with_reversed_settlement_rows(monkeypatch):
     """When the mart includes reversed-after-settlement rows, the grain check
     must still pass as long as mart count == eligible + reversed-with-settlement.
     """
-    from naijapay import quality
+    from settlement import quality
 
     monkeypatch.setattr(quality, "_client", lambda _: _Client(grain_mismatch=False))
     hard, _ = quality.run_checks(Settings())

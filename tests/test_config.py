@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from naijapay.config import Settings, get_settings
+from settlement.config import Settings, get_settings
 
 S3_ENV = {
     "S3_ENDPOINT": "seaweedfs:8333",

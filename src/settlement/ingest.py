@@ -26,8 +26,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pyarrow import fs as pafs
 
-from naijapay.config import Settings, get_settings
-from naijapay.schemas import settlement_event_schema, transaction_event_schema
+from settlement.config import Settings, get_settings
+from settlement.schemas import settlement_event_schema, transaction_event_schema
 
 _TS_FIELDS = (
     "event_ts",
@@ -234,7 +234,7 @@ def main() -> None:
             schema=schema,
             dataset=dataset,
             settings=s,
-            group_id=f"naijapay-ingest-{dataset}-{args.group_suffix}",
+            group_id=f"settlement-ingest-{dataset}-{args.group_suffix}",
             idle_timeout_s=args.idle_timeout,
         )
         print(f"{dataset}: {results[dataset]}")

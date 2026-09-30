@@ -35,8 +35,8 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from naijapay.config import Settings, get_settings
-from naijapay.schemas import STATUS_RANK
+from settlement.config import Settings, get_settings
+from settlement.schemas import STATUS_RANK
 
 
 def _s3(settings: Settings):
@@ -88,7 +88,7 @@ def build_session(driver_memory: str, shuffle_partitions: int):
     from pyspark.sql import SparkSession
 
     return (
-        SparkSession.builder.appName("naijapay-raw-to-staged")
+        SparkSession.builder.appName("settlement-raw-to-staged")
         # local[2] instead of local[*]: all executor threads share the single
         # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
         # peak RSS of concurrent window-function shuffles exceeds the limit.
@@ -215,7 +215,7 @@ def run(settings: Settings, driver_memory: str, shuffle_partitions: int) -> dict
     spark = build_session(driver_memory, shuffle_partitions)
     metrics: dict = {}
     try:
-        with tempfile.TemporaryDirectory(prefix="naijapay-spark-") as tmp:
+        with tempfile.TemporaryDirectory(prefix="settlement-spark-") as tmp:
             root = Path(tmp)
             for dataset, fn, out_prefix in (
                 ("transactions", transform_transactions, "transactions"),
