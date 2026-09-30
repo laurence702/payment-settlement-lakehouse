@@ -1,4 +1,4 @@
--- Settlement ClickHouse Validation Queries
+-- Settlement Lakehouse ClickHouse Validation Queries
 -- Run these in the ClickHouse Play UI at http://localhost:8123/play
 -- or via: docker exec np_clickhouse clickhouse-client --user dataeng --password dataeng_local_only
 --
