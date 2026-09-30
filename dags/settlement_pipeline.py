@@ -1,4 +1,4 @@
-"""End-to-end Settlement settlement reconciliation pipeline.
+"""End-to-end payment settlement reconciliation pipeline.
 
     generate -> kafka -> raw parquet (S3)
              -> spark dedupe/latest-wins -> staged parquet (S3)
@@ -28,7 +28,7 @@ DEFAULT_ARGS = {
 
 @dag(
     dag_id="settlement_pipeline",
-    description="Nigerian payments settlement reconciliation, ingest to serving",
+    description="Payment settlement reconciliation: ingest to serving",
     start_date=pendulum.datetime(2026, 1, 1, tz="UTC"),
     schedule=None,
     catchup=False,

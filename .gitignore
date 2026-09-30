@@ -5,7 +5,7 @@ __pycache__/
 .venv/
 venv/
 logs/
-dbt/settlement/target/
+dbt/*/target/
 dbt/settlement/dbt_packages/
 dbt/settlement/logs/
 data/local/

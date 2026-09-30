@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Topics are created explicitly because KAFKA_AUTO_CREATE_TOPICS_ENABLE is false.
 # Auto-create is convenient right up until a typo in a producer silently creates
-# `settlement.transacton.v1` with one partition and nobody notices for a week.
+# `settlement.transaction.v1` with one partition and nobody notices for a week.
 set -euo pipefail
 K=/opt/kafka/bin/kafka-topics.sh
 B=localhost:19092
