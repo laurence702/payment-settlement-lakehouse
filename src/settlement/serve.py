@@ -110,7 +110,11 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
         f"CREATE TABLE {shadow} ENGINE = MergeTree {partition} "
         f"ORDER BY {spec.order_by} SETTINGS allow_nullable_key = 1 EMPTY AS SELECT * FROM {s3}"
     )
-    client.command(f"INSERT INTO {shadow} SELECT * FROM {s3}")
+    client.command(
+        f"INSERT INTO {shadow} "
+        "SETTINGS max_threads = 2, max_insert_block_size = 65536 "
+        f"SELECT * FROM {s3}"
+    )
     rows = client.command(f"SELECT count() FROM {shadow}")
 
     if int(rows) == 0:
@@ -139,6 +143,8 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
 def run(settings: Settings) -> list[dict]:
     client = _client(settings)
     client.command(f"CREATE DATABASE IF NOT EXISTS {settings.clickhouse_db}")
+    client.command("SYSTEM DROP MARK CACHE")
+    client.command("SYSTEM DROP UNCOMPRESSED CACHE")
     return [load_mart(client, settings, spec) for spec in MARTS]
 
 

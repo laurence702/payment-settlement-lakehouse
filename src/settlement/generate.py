@@ -375,7 +375,7 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
         # drained and avoid hitting queue limits mid-batch.
         if i % 100 == 0:
             producer.poll(0)
-    producer.flush(120)
+    producer.flush(300)
 
     if failures:
         raise RuntimeError(f"{len(failures)} deliveries failed, first: {failures[0]}")

@@ -31,7 +31,10 @@ step "creating kafka topics"
 step "unpausing and triggering the DAG"
 docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline >/dev/null
 RUN_ID="demo__$(date -u +%Y%m%dT%H%M%S)"
-docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline --run-id "$RUN_ID"
+CONF_JSON=$(printf '{"event_count": %d, "days": %d, "seed": %d}' \
+  "${GEN_EVENT_COUNT:-50000}" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline \
+  --run-id "$RUN_ID" --conf "$CONF_JSON"
 
 step "waiting for the run to finish (generate, ingest, spark, dbt, clickhouse)"
 echo "  follow along at http://localhost:${PORT_AIRFLOW}"
