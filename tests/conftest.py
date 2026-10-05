@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC
 from pathlib import Path
 
 import pytest
 
-from naijapay.generate import generate_events
+from settlement.generate import generate_events
 
 SEED = 20260909
 
@@ -13,7 +14,12 @@ SEED = 20260909
 @pytest.fixture(scope="session")
 def events():
     """A small but pathological dataset: duplicates, out-of-order, unsettled."""
-    return generate_events(n_transactions=3000, days=14, seed=SEED)
+    return generate_events(
+        n_transactions=3000,
+        days=14,
+        seed=SEED,
+        settlement_source_delay_days=4,
+    )
 
 
 @pytest.fixture(scope="session")
@@ -37,15 +43,15 @@ def raw_dir(tmp_path_factory, events) -> Path:
 def raw_parquet_dir(tmp_path_factory, events) -> Path:
     """Raw events as Parquet, matching what the ingest task writes to the object store."""
     pa = pytest.importorskip("pyarrow")
+    from datetime import datetime
+
     import pyarrow.parquet as pq
 
-    from naijapay.schemas import settlement_event_schema, transaction_event_schema
-
-    from datetime import datetime, timezone
+    from settlement.schemas import settlement_event_schema, transaction_event_schema
 
     tx, stl = events
     d = tmp_path_factory.mktemp("raw_parquet")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     def coerce(rows, schema):
         out = []
@@ -56,7 +62,13 @@ def raw_parquet_dir(tmp_path_factory, events) -> Path:
                     rec[f.name] = now
                 elif f.name == "settlement_date":
                     rec[f.name] = datetime.fromisoformat(r[f.name]).date()
-                elif f.name in ("event_ts", "created_at", "updated_at", "settled_at"):
+                elif f.name in (
+                    "event_ts",
+                    "created_at",
+                    "updated_at",
+                    "settled_at",
+                    "settlement_source_watermark_at",
+                ):
                     rec[f.name] = datetime.fromisoformat(r[f.name])
                 else:
                     rec[f.name] = r.get(f.name)
@@ -76,7 +88,7 @@ def raw_parquet_dir(tmp_path_factory, events) -> Path:
 @pytest.fixture(scope="session")
 def spark():
     pytest.importorskip("pyspark")
-    from naijapay.transform_spark import build_session
+    from settlement.transform_spark import build_session
 
     s = build_session(driver_memory="1g", shuffle_partitions=4)
     yield s
@@ -91,7 +103,7 @@ def staged_dir(tmp_path_factory, spark, raw_parquet_dir) -> Path:
     production code actually produces. A hand-rolled DuckDB stand-in would drift
     from the Spark job and quietly stop testing anything.
     """
-    from naijapay.transform_spark import transform_settlements, transform_transactions
+    from settlement.transform_spark import transform_settlements, transform_transactions
 
     out = tmp_path_factory.mktemp("staged")
     transform_transactions(spark, raw_parquet_dir / "transactions", out / "transactions")

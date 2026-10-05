@@ -1,263 +1,217 @@
-# NaijaPay Lakehouse
-
-A settlement reconciliation pipeline for Nigerian card and bank-transfer
-payments, sized to run on one laptop.
+# Payment Settlement Lakehouse
 
 [![tests](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Synthetic Paystack and Flutterwave-shaped events go into Kafka. Deduped,
-modelled and reconciled data comes out in ClickHouse. It answers one question
-end to end:
+Payment Settlement Lakehouse is a local, production-shaped data pipeline for
+reconciling **synthetic Paystack/Flutterwave-shaped events**. It models how a
+data platform can identify settlement gaps and amount discrepancies while
+preserving raw evidence, deterministic transforms, and clear data-quality
+states.
 
-> **Which successful charges have not been settled, how overdue are they, and
-> how much money is that?**
+It is not a payment processor. It has no official Paystack or Flutterwave
+integration, real customer data, banking access, or production deployment. No
+real money is moved.
 
-That question is the whole design. Every component below exists because
-answering it correctly needs something that component does.
+## The question it answers
+
+> For eligible successful synthetic charges, which have no verified settlement
+> line, what net amount is expected or outstanding, and is the settlement
+> source current enough to make that conclusion?
+
+The result is a synthetic reconciliation signal. It does not prove that money
+reached a merchant bank account.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    G["<b>generator</b><br/>synthetic Paystack /<br/>Flutterwave events<br/><i>duplicates, out-of-order,<br/>unsettled, reversals</i>"]
-    K["<b>Kafka 4.3.1</b><br/>KRaft, 1 broker<br/><i>19092 in, 9092 out</i>"]
-
-    subgraph LAKE["&nbsp;SeaweedFS &middot; Parquet is the source of truth&nbsp;"]
-    direction LR
-        R["<b>raw</b><br/>as ingested,<br/>duplicates intact"]
-        S["<b>staged</b><br/>deduped,<br/>latest status wins<br/><i>ordered by updated_at,<br/>status-rank tiebreak</i>"]
-        M["<b>marts</b><br/>settlement reconciliation<br/><i>aged T+1 / T+2 /<br/>within SLA / breached</i>"]
-        R -->|"Spark 4.2<br/>local mode"| S
-        S -->|"dbt + DuckDB<br/>2 views, 5 marts"| M
+    subgraph Ingest["Ingest layer"]
+        G["Synthetic\nevent generator"] --> K["Kafka broker\n(2 topics)"] --> I["Ingest\n(raw Parquet)"]
+        I --> Q["Quarantine\n(malformed payloads)"]
     end
 
-    CH["<b>ClickHouse 25.8</b><br/>serving<br/><i>atomic table swap</i>"]
+    subgraph Transform["Transform layer"]
+        I --> SP["PySpark\n(dedupe · latest status)"]
+        SP --> DBT["dbt + DuckDB\n(staging · facts · marts)"]
+    end
 
-    G -->|produce| K
-    K -->|"ingest.py<br/>manual offsets"| R
-    M -->|serve.py| CH
+    subgraph Serve["Serving layer"]
+        DBT --> CH["ClickHouse\n(atomic table swap)"]
+        CH --> QC["Quality checks\n(5 assertions)"]
+    end
 
-    classDef zone fill:#fbfbfd,stroke:#9aa4b2,stroke-dasharray:4 3
-    class LAKE zone
+    subgraph Store["Object store"]
+        S3["SeaweedFS / S3\n(raw + staged Parquet)"]
+    end
+
+    I -. raw Parquet .-> S3
+    S3 -. staged Parquet .-> SP
+
+    A["Airflow 3.3.1\n(orchestration)"] -. DAG: settlement_pipeline .-> Ingest
+    A -. orchestrates .-> Transform
+    A -. orchestrates .-> Serve
 ```
 
-Airflow 3.3.1 orchestrates all of it: one DAG, seven tasks, LocalExecutor.
+The local stack is Kafka, SeaweedFS-compatible object storage (S3-API), PySpark,
+dbt with DuckDB, ClickHouse, and Airflow. It is designed for a 6 GB Docker VM
+(Colima on Apple Silicon); see [ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
 
-## Run it
+## Benchmarks
 
-Needs Colima or Docker Desktop with 6 GB, and Docker Compose v2. One clone,
-one `.env`: the platform layer (Kafka, SeaweedFS, ClickHouse, Postgres, Redis)
-is defined in this repo's own `docker-compose.yml`, not pulled in from
-anywhere else.
+Numbers from the last successful end-to-end run on an M1 MacBook inside a 6 GB
+Colima VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
+
+| Metric | Value |
+|---|---|
+| End-to-end DAG runtime | **75 seconds** |
+| Total transaction value | **₦1.6 billion** |
+| Outstanding synthetic exposure | **₦51.3 million** |
+| `fct_transactions` | 100,000 rows · 7.84 MiB |
+| `fct_settlements` | 85,180 rows · 5.38 MiB |
+| `mart_settlement_reconciliation` | 87,910 rows · 6.27 MiB |
+| Match rate | 93.4% `matched` |
+| Missing settlement | 2,731 transactions |
+| Amount-mismatched rows | 3,054 rows |
+| Merchants / Customers / Days | 40 / 95,085 / 14 |
+| Automated tests | **49** (unit + Spark + dbt) |
+
+## Data and reconciliation flow
+
+The seeded generator emits duplicates, out-of-order status events, missing
+settlements, reversals, amount discrepancies, merchant T+1/T+2 rules, and
+shared payout batches. Money remains integer kobo end to end.
+
+1. Kafka carries transaction and settlement events keyed by `transaction_ref`.
+2. Ingest writes append-only raw Parquet and commits Kafka offsets only after
+   durable writes. Malformed payloads are retained separately with bounded raw
+   payload, source topic, time, and safe error metadata.
+3. Spark removes duplicate event IDs and selects the latest transaction status
+   with a deterministic status-rank tie-break.
+4. dbt derives transaction facts, settlement-line facts, expected settlement
+   dates, and the reconciliation mart.
+5. ClickHouse serves the parquet marts after an atomic table swap.
+
+`mart_settlement_reconciliation` retains v0.1-compatible `is_settled` and
+`reconciliation_bucket` fields. New consumers should use these fields:
+
+| Field | Meaning |
+|---|---|
+| `expected_net_kobo` | Charge net expected in NGN kobo. |
+| `settled_net_kobo` | Settlement-line net amount, if present. |
+| `settlement_variance_kobo` | Settled minus expected net amount. |
+| `outstanding_net_kobo` | Expected amount still unpaid; zero for matched, overpaid, and reversal-after-settlement cases. |
+| `expected_settlement_date` | Success date plus the merchant's synthetic T+1 or T+2 rule. |
+| `source_freshness_status` | `fresh` or `stale_or_incomplete`, based on synthetic settlement-report watermark coverage. |
+
+`reconciliation_status` is one of `matched`, `missing_settlement`,
+`partial_settlement`, `short_paid`, `overpaid`, `reversed_after_settlement`, or
+`unverified_source`. `unverified_source` prevents a stale or incomplete
+synthetic settlement feed from being represented as a missing-settlement
+breach. A `payout_id` connects multiple settlement lines to a synthetic payout
+batch while preserving `transaction_ref` compatibility.
+
+## Run locally
+
+Use Docker Desktop or Colima configured with 6 GB and Docker Compose v2.
 
 ```bash
 git clone https://github.com/laurence702/payment-settlement-lakehouse
 cd payment-settlement-lakehouse
 
-make bootstrap    # resolves absolute paths and generates secrets into .env
-make preflight    # docker, memory, ports, image pins, env sanity
-make build        # airflow image: pyspark + JRE + isolated dbt venv
-make demo         # start everything, run the DAG, print the reconciliation
+make bootstrap
+make preflight
+make build
+make demo
 ```
 
-`make preflight` is not optional politeness. It checks the things that actually
-break this stack, and it fails in two seconds instead of eight minutes into an
-image pull. Run it first.
+`make bootstrap` creates the local `.env` and generated development secrets.
+`make preflight` verifies Docker, memory, disk, ports, pins, and environment
+configuration. `make demo` starts the required services, triggers the Airflow
+DAG, and reports the reconciliation result.
 
-`make demo` finishes by printing reconciliation buckets straight out of
-ClickHouse. `make urls` prints where to point a browser.
-
-The repo is named for what it does; the code is named for the product it models.
-`src/naijapay/`, the dbt project, the ClickHouse database and the DAG id are all
-`naijapay`. Nothing is wrong if you see both names.
-
-## What is actually hard here
-
-A payments dataset that is clean is a payments dataset that is fake.
-
-The generator manufactures four problems on purpose, at rates set as constants
-in `src/naijapay/generate.py`. Each stage of the pipeline exists to handle one
-of them:
-
-| Problem | Rate | Handled by |
-|---|---|---|
-| At-least-once delivery, duplicate `event_id` | `DUPLICATE_RATE = 0.02` | Spark `dropDuplicates` |
-| Two or more events per charge, `pending` then a terminal status | every charge | Spark window function, latest wins |
-| Terminal event arrives before its own `pending` | `OUT_OF_ORDER_RATE = 0.05` | Order by `updated_at`, not arrival, with a deterministic status-rank tiebreak |
-| Successful charge that never settles | `UNSETTLED_RATE = 0.031` | `mart_settlement_reconciliation`, aged into T+1 / T+2 / within-SLA / breached |
-
-Plus reversals at `REVERSAL_RATE = 0.012`, because a charge that succeeded and
-was later charged back is not the same thing as a charge that failed, and a
-reconciliation report that conflates them is wrong in a way nobody notices.
-
-Two properties matter more than any of that, because they are the difference
-between a pipeline and a script that ran once:
-
-**Reruns are deterministic.** Two runs over the same input produce
-byte-identical marts. This needs the status-rank tiebreak: two events for one
-charge can share an `updated_at`, and without a tiebreak the winner is whichever
-row Spark happened to see first. There is a test for exactly that case.
-
-**"Today" comes from the data, not the clock.** The reconciliation mart derives
-its as-of date from `max(ingested_at)`, not `current_date`. A mart whose output
-changes because you reran it on a Tuesday cannot be tested, and cannot be diffed
-against yesterday to see what actually moved.
-
-## Money
-
-Every amount is an integer count of kobo, everywhere, end to end. Fees are
-integer arithmetic. Naira conversion happens once, at the presentation edge, and
-never inside an aggregate.
-
-USD charges convert at a stored FX rate (`NGN_PER_USD`, static on purpose: a
-real pipeline joins an FX table) and truncate to integer kobo, which is where a
-rounding drift would enter if one entered anywhere.
-
-Settlement lands days after the charge, so the generator re-samples its own FX
-rate at settlement time instead of reusing the one from checkout, the same way
-a real PSP settles at whatever rate is current then, not the rate quoted up
-front. The two integer truncations, one at charge time and one at settlement
-time, no longer land on the same value, so a small non-zero variance is
-expected on every run rather than something that would only turn up in
-production.
-
-Whether it does is measured rather than assumed. Every settled row carries
-`settlement_variance_kobo`, and `src/naijapay/quality.py` warns on drift
-consistent with rounding while failing on drift large enough to be a pricing
-error (more than 100 kobo average per settled row). To check your own run:
-
-```sql
-SELECT sum(settlement_variance_kobo), count()
-FROM naijapay.mart_settlement_reconciliation;
-```
-
-Truncation rather than rounding is deliberate. Rounding half-up on every row
-biases the total upward; truncation biases it in one direction you can predict,
-measure and assert on.
-
-## Stack
-
-| Component | Version | Job | Why not something else |
-|---|---|---|---|
-| Kafka (KRaft) | 4.3.1 | Event transport | Zookeeper is gone in 4.x. Two listeners: `kafka:19092` inside, `localhost:9092` outside. Getting that wrong is the most common reason a local Kafka works from Docker and hangs from the host |
-| SeaweedFS | 4.46 | Object store: raw / staged / marts | The lakehouse. Parquet here is the source of truth. Was MinIO until [ADR 0005](docs/adr/0005-object-store-minio-is-a-dead-end.md) |
-| PySpark (local mode) | 4.2.0 | Dedupe, latest-status-wins | Unnecessary at this volume, and [ADR 0002](docs/adr/0002-spark-local-mode.md) says so out loud before explaining why it is here anyway |
-| dbt + DuckDB | 1.12.4 / 1.5.5 | Staging to marts | Excellent transform engine, poor serving database |
-| ClickHouse | 25.8.9 | Serving | Real concurrency for dashboards. [ADR 0001](docs/adr/0001-duckdb-transforms-clickhouse-serving.md) |
-| Airflow | 3.3.1 | Orchestration, 7 tasks | LocalExecutor forks tasks inside the scheduler, which is why the scheduler gets 1.8 GB and nothing else does |
-| Postgres | 16.10 | Airflow metadata | Shared instead of a second instance, which saves ~380 MB |
-
-Every image tag lives in the platform repo's `.env` and nowhere else.
-`make preflight` verifies each one resolves against the registry without
-pulling it.
-
-## The 6 GB budget
-
-The VM has 6 GB, so the full stack cannot run at once. That is a design
-constraint rather than an inconvenience, and it drove most of
-[ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
-
-```
-core (postgres + seaweedfs + redis)  0.76 GB
-kafka                                0.77 GB
-clickhouse                           1.28 GB
-airflow api + scheduler + dagproc    2.71 GB
--------------------------------------------
-                                     5.52 GB    ~0.48 GB left for dockerd
-```
-
-Every service sits behind a Compose profile and declares a `mem_limit`. The
-limits were sized backwards from one binding constraint: the local-mode Spark
-driver runs as a subprocess of the Airflow scheduler, so it has to fit under the
-scheduler's ceiling. Raise one number and you lower another.
-
-There is no `make up-all` target, deliberately: nothing in this budget has
-slack left over. Prometheus and Grafana were never part of it; ClickHouse's
-own `/play` UI and `make ch` cover what this pipeline's own question needs.
-(They still exist in data-engineering-shared-infra, the sibling repo this
-platform layer started out shared with, behind its own `observe` profile, for
-projects that do want them.)
-
-`make mem` prints live usage against the budget.
-
-## Tests
-
-35 tests. None of them need Docker, Kafka, an object store or ClickHouse, which
-is why they run in CI on every push.
+## Test commands
 
 ```bash
 make venv
-make test-fast     # 24 tests, pure logic, under a second
-make test-spark    # 6 tests, real PySpark, starts a JVM
-make test-dbt      # 5 tests: builds 2 staging views + 5 marts, runs every dbt test
-make test          # all of it
-make lint          # ruff check + format
+make lint
+make test-fast
+make test-spark
+make test-dbt
+make test
+make verify
 ```
 
-The dbt tests consume the output of the **real** Spark transform, not a
-reimplementation of it. A hand-rolled stand-in drifts from the production job
-and quietly stops testing anything.
+`make test` runs unit, Spark, and dbt tests without the Docker stack.
+`make verify` is the full Docker end-to-end verification; it requires enough
+local Docker capacity and validates the DAG, container health, and non-empty
+reconciliation output.
 
-On top of the pytest suite, dbt runs 5 singular data tests
-(`dbt/naijapay/tests/`) plus generic tests declared in the `schema.yml` files:
-no negative money anywhere, no settlement dated before its own transaction, no
-settled row carrying an outstanding balance, success rate inside a plausible
-band, every USD charge carrying an FX rate. `make test-dbt` prints the total.
+## Data-quality guarantees
 
-## Layout
+- Explicit Arrow schemas are used rather than inferred JSON schemas.
+- Raw data is append-only and retains duplicates and out-of-order records.
+- Kafka offsets are manually committed only after raw Parquet writes complete.
+- Malformed messages are quarantined instead of silently dropped.
+- Transaction collapse is deterministic for equal timestamps.
+- Monetary values are integer kobo, including expected, settled, variance, and
+  outstanding amounts.
+- dbt tests enforce key uniqueness, required fields, allowed reconciliation and
+  freshness states, and basic source relationships.
+- Pytest covers generator pathologies, quarantine records, real Spark staging,
+  and dbt models built from staged Parquet (49 tests across 7 modules).
 
+## Known limitations
+
+- The source watermark is deterministic synthetic metadata, not a provider
+  report API or a completeness guarantee from a real PSP.
+- Settlement lines are synthetic charge-to-line mappings. Payout batches are
+  represented, but bank credits, payout adjustments, reserves, and fees beyond
+  the modeled line are not reconciled.
+- Merchant rules are synthetic calendar-day T+1/T+2 rules. Business-day
+  calendars, provider cutoffs, holidays, channel-specific rules, and timezone
+  policy are future work.
+- A matching synthetic settlement line does not prove merchant bank receipt.
+- There are no signed webhooks, provider API/report ingestion, schema registry,
+  replicas, production monitoring, CDC, or incremental dbt models.
+- Kafka uses one broker and replication factor one. Spark runs locally and
+  stages object-store inputs through local files to stay within the memory
+  envelope.
+
+## v0.2 and roadmap
+
+Implemented in v0.2:
+
+- Amount-aware reconciliation with a 7-state `reconciliation_status` and
+  integer-kobo variance and outstanding-balance fields.
+- Merchant-specific expected settlement dates anchored to the original success
+  event, with per-merchant T+1/T+2 SLA classification.
+- Synthetic source freshness and completeness signaling: `unverified_source`
+  prevents a stale settlement feed from being counted as a breach.
+- Payout-batch identifiers on settlement lines, preserving `transaction_ref`
+  grain in `fct_settlements`.
+- Append-only malformed-message quarantine with bounded raw payload retention.
+- Quality-check grain fix: assertion #4 now mirrors the mart grain, including
+  `reversed_after_settlement` rows present in `fct_settlements`.
+
+Benchmark (100k events, 6 GB VM, M1 MacBook):
+75-second end-to-end run · ₦1.6B total value · ₦51.3M synthetic outstanding
+exposure surfaced · 93.4% match rate · 49 automated tests.
+
+Later real-world requirements include signed provider webhooks and report/API
+ingestion, trusted completeness contracts and cutoffs, payout adjustments and
+bank-credit reconciliation, business calendars and auditable FX, schema
+registry and replicas, plus production monitoring and deployment controls.
+
+## Repository layout
+
+```text
+dags/                     Airflow orchestration
+src/settlement/             generator, schemas, ingest, Spark, serving, checks
+dbt/settlement/             staging models, facts, marts, and data tests
+docs/adr/                 architecture decisions
+scripts/                  bootstrap, preflight, demo, and verification helpers
 ```
-dags/                     one DAG, 7 tasks
-src/naijapay/
-  config.py               all env reading, fails once at import
-  schemas.py              explicit Arrow schemas, no inference anywhere
-  generate.py             synthetic events, stdlib only, seeded
-  ingest.py               Kafka drain to raw Parquet, manual offset commit
-  transform_spark.py      raw to staged, local-mode Spark
-  serve.py                marts to ClickHouse behind an atomic table swap
-  quality.py              checks the serving layer, not the files
-dbt/naijapay/             2 staging views, 5 marts, 5 singular tests
-docs/adr/                 why things are the way they are
-scripts/                  preflight, env guard, demo, urls
-```
-
-## Design decisions
-
-Read these before changing anything. They are short and they explain the
-non-obvious choices.
-
-- [0001](docs/adr/0001-duckdb-transforms-clickhouse-serving.md) DuckDB transforms, ClickHouse serving
-- [0002](docs/adr/0002-spark-local-mode.md) Spark in local mode, and why it is here at all
-- [0003](docs/adr/0003-profiles-and-the-6gb-budget.md) Compose profiles and the 6 GB budget
-- [0004](docs/adr/0004-kraft-and-pinned-images.md) KRaft, and one place for every version pin
-- [0005](docs/adr/0005-object-store-minio-is-a-dead-end.md) SeaweedFS replaces MinIO
-- [0006](docs/adr/0006-vendor-the-platform-layer.md) The platform layer is vendored into this repo, not shared
-
-0005 is the interesting one. A pinned MinIO image turned out never to have been
-published, which surfaced that MinIO had stopped shipping free container images
-entirely. Swapping the object store touched 19 files, and almost all of that was
-renaming `MINIO_*` to `S3_*`. Naming the variables after the vendor is what
-turned a protocol-level swap into a 19-file change. The next swap is one line.
-
-## Known gaps
-
-Stated rather than hidden, because a portfolio repo that claims to be production
-infrastructure is lying and everybody can tell.
-
-- **Kafka is not scraped by Prometheus.** The image exposes JMX, not Prometheus,
-  so it needs a `jmx_exporter` sidecar at roughly 150 MB. On this budget that
-  lost to giving ClickHouse headroom. Known gap, not an oversight.
-- **Spark reads local files, not `s3a://`.** Wiring `hadoop-aws` into a local
-  job is jar version-matching for no change in logic. [ADR 0002](docs/adr/0002-spark-local-mode.md).
-- **No incremental models.** Everything is a full refresh. Correct at this
-  volume, and the first thing to change if the data grew.
-- **No CDC and no schema registry.** Producer and consumer agree on a schema by
-  convention in `schemas.py`. A real deployment uses Avro or Protobuf with a
-  registry.
-- **Single Kafka broker, replication factor 1.** No durability story at all.
-  Fine on a laptop, unacceptable anywhere else.
-- **The FX rate is a constant.** A real pipeline joins a rates table with
-  validity windows, and the reconciliation would then need to know which rate
-  applied when.
 
 ## Licence
 

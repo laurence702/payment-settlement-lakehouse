@@ -22,12 +22,13 @@ Two decisions worth defending:
     several seconds wide, where a dashboard renders zeroes. That window is how
     you get asked why revenue went to zero at 3am.
 """
+
 from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
 
-from naijapay.config import Settings, get_settings
+from settlement.config import Settings, get_settings
 
 
 @dataclass(frozen=True)
@@ -91,11 +92,7 @@ def _s3_expr(settings: Settings, parquet: str) -> str:
     The collection carries the endpoint and credentials, so no access key ever
     appears in a query, a log line, or this repository.
     """
-    return (
-        f"s3(s3_lakehouse, "
-        f"filename = '{settings.bucket_marts}/{parquet}', "
-        f"format = 'Parquet')"
-    )
+    return f"s3(s3_lakehouse, filename = '{settings.bucket_marts}/{parquet}', format = 'Parquet')"
 
 
 def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
@@ -113,7 +110,11 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
         f"CREATE TABLE {shadow} ENGINE = MergeTree {partition} "
         f"ORDER BY {spec.order_by} SETTINGS allow_nullable_key = 1 EMPTY AS SELECT * FROM {s3}"
     )
-    client.command(f"INSERT INTO {shadow} SELECT * FROM {s3}")
+    client.command(
+        f"INSERT INTO {shadow} "
+        "SETTINGS max_threads = 2, max_insert_block_size = 65536 "
+        f"SELECT * FROM {s3}"
+    )
     rows = client.command(f"SELECT count() FROM {shadow}")
 
     if int(rows) == 0:
@@ -125,8 +126,7 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
 
     exists = int(
         client.command(
-            f"SELECT count() FROM system.tables "
-            f"WHERE database = '{db}' AND name = '{spec.name}'"
+            f"SELECT count() FROM system.tables WHERE database = '{db}' AND name = '{spec.name}'"
         )
     )
     if exists:
@@ -143,6 +143,8 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
 def run(settings: Settings) -> list[dict]:
     client = _client(settings)
     client.command(f"CREATE DATABASE IF NOT EXISTS {settings.clickhouse_db}")
+    client.command("SYSTEM DROP MARK CACHE")
+    client.command("SYSTEM DROP UNCOMPRESSED CACHE")
     return [load_mart(client, settings, spec) for spec in MARTS]
 
 

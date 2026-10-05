@@ -4,6 +4,7 @@ Every module imports settings from here rather than calling os.getenv inline,
 so a missing variable fails once, loudly, at import time, instead of three
 tasks into a DAG run.
 """
+
 from __future__ import annotations
 
 import os
@@ -25,8 +26,8 @@ def _env(key: str, default: str | None = None) -> str:
 class Settings:
     # --- Kafka --------------------------------------------------------------
     kafka_bootstrap: str = field(default_factory=lambda: _env("KAFKA_BOOTSTRAP", "kafka:19092"))
-    topic_transactions: str = "naijapay.transactions.v1"
-    topic_settlements: str = "naijapay.settlements.v1"
+    topic_transactions: str = "settlement.transactions.v1"
+    topic_settlements: str = "settlement.settlements.v1"
 
     # --- Object store -------------------------------------------------------
     # S3_*, not SEAWEEDFS_*. pyarrow, DuckDB httpfs and ClickHouse all speak
@@ -46,7 +47,7 @@ class Settings:
     clickhouse_password: str = field(
         default_factory=lambda: _env("CLICKHOUSE_PASSWORD", "dataeng_local_only")
     )
-    clickhouse_db: str = field(default_factory=lambda: _env("CLICKHOUSE_DB", "naijapay"))
+    clickhouse_db: str = field(default_factory=lambda: _env("CLICKHOUSE_DB", "settlement"))
 
     @property
     def s3_endpoint_url(self) -> str:

@@ -1,36 +1,71 @@
 """Kafka -> object store, raw layer.
 
-Design decisions worth defending in an interview:
+Key operational constraints:
 
 * This is a BATCH drain of a stream, not a streaming job. It reads until the
   broker stops handing it messages, then exits. Airflow schedules batches; a
   never-ending consumer inside an Airflow task is a task that never succeeds.
 
-* Offsets are committed only AFTER the Parquet file is durably written. That
-  ordering is the whole difference between at-least-once (a crash re-reads and
-  the dedupe downstream absorbs it) and at-most-once (a crash silently loses
-  data). Auto-commit is disabled for this reason.
+* Offsets are committed only AFTER the Parquet file is durably written. This
+  preserves at-least-once delivery: a crash re-reads records and downstream
+  deduplication absorbs them instead of silently losing data. Auto-commit is
+  disabled for this reason.
 
 * The raw layer is append-only and keeps duplicates, out-of-order events and
   malformed rows. Cleaning here would destroy the evidence you need when a
   number looks wrong three weeks later.
 """
+
 from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timedelta, timezone
-
-UTC = timezone.utc
+from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pyarrow import fs as pafs
 
-from naijapay.config import Settings, get_settings
-from naijapay.schemas import settlement_event_schema, transaction_event_schema
+from settlement.config import Settings, get_settings
+from settlement.schemas import settlement_event_schema, transaction_event_schema
 
-_TS_FIELDS = ("event_ts", "created_at", "updated_at", "settled_at")
+_TS_FIELDS = (
+    "event_ts",
+    "created_at",
+    "updated_at",
+    "settled_at",
+    "settlement_source_watermark_at",
+)
+_QUARANTINE_MAX_PAYLOAD_BYTES = 256_000
+
+
+def quarantine_record(
+    raw_payload: bytes | None, topic: str, ingested_at: datetime, error: Exception
+) -> dict:
+    """Build a bounded, append-only record for a malformed Kafka message."""
+    payload = raw_payload or b""
+    truncated = len(payload) > _QUARANTINE_MAX_PAYLOAD_BYTES
+    payload = payload[:_QUARANTINE_MAX_PAYLOAD_BYTES]
+    return {
+        "source_topic": topic,
+        "ingested_at": ingested_at,
+        "error_type": type(error).__name__,
+        # Do not persist exception text: parser errors can echo sensitive input.
+        "raw_payload": payload.decode("utf-8", errors="replace"),
+        "payload_truncated": truncated,
+    }
+
+
+def _quarantine_schema() -> pa.Schema:
+    return pa.schema(
+        [
+            pa.field("source_topic", pa.string(), nullable=False),
+            pa.field("ingested_at", pa.timestamp("us", tz="UTC"), nullable=False),
+            pa.field("error_type", pa.string(), nullable=False),
+            pa.field("raw_payload", pa.string(), nullable=False),
+            pa.field("payload_truncated", pa.bool_(), nullable=False),
+        ]
+    )
 
 
 def _s3(settings: Settings) -> pafs.S3FileSystem:
@@ -73,7 +108,7 @@ def drain_topic(
     dataset: str,
     settings: Settings,
     group_id: str,
-    max_messages: int = 500_000,
+    max_messages: int | None = None,
     idle_timeout_s: float = 10.0,
     batch_rows: int = 25_000,
 ) -> dict:
@@ -98,30 +133,42 @@ def drain_topic(
     partition_date = ingested_at.date().isoformat()
 
     buf: list[dict] = []
-    stats = {"consumed": 0, "written": 0, "malformed": 0, "files": 0}
+    quarantine_buf: list[dict] = []
+    stats = {"consumed": 0, "written": 0, "malformed": 0, "files": 0, "quarantine_files": 0}
     deadline = datetime.now(UTC) + timedelta(seconds=idle_timeout_s)
     part_no = 0
 
     def flush() -> None:
-        nonlocal buf, part_no
-        if not buf:
+        nonlocal buf, quarantine_buf, part_no
+        if not buf and not quarantine_buf:
             return
-        for row in buf:
-            row["ingested_at"] = ingested_at
-        table = pa.Table.from_pylist(buf, schema=schema)
-        key = (
-            f"{settings.bucket_raw}/{dataset}/ingest_date={partition_date}/"
-            f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
-        )
-        with s3.open_output_stream(key) as sink:
-            pq.write_table(table, sink, compression="zstd")
-        stats["written"] += len(buf)
-        stats["files"] += 1
+        if buf:
+            for row in buf:
+                row["ingested_at"] = ingested_at
+            table = pa.Table.from_pylist(buf, schema=schema)
+            key = (
+                f"{settings.bucket_raw}/{dataset}/ingest_date={partition_date}/"
+                f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
+            )
+            with s3.open_output_stream(key) as sink:
+                pq.write_table(table, sink, compression="zstd")
+            stats["written"] += len(buf)
+            stats["files"] += 1
+            buf = []
+        if quarantine_buf:
+            table = pa.Table.from_pylist(quarantine_buf, schema=_quarantine_schema())
+            key = (
+                f"{settings.bucket_raw}/quarantine/{dataset}/ingest_date={partition_date}/"
+                f"part-{ingested_at:%Y%m%dT%H%M%S}-{part_no:04d}.parquet"
+            )
+            with s3.open_output_stream(key) as sink:
+                pq.write_table(table, sink, compression="zstd")
+            stats["quarantine_files"] += 1
+            quarantine_buf = []
         part_no += 1
-        buf = []
 
     try:
-        while stats["consumed"] < max_messages:
+        while max_messages is None or stats["consumed"] < max_messages:
             msg = consumer.poll(1.0)
             if msg is None:
                 if datetime.now(UTC) >= deadline:
@@ -136,10 +183,12 @@ def drain_topic(
             stats["consumed"] += 1
             try:
                 buf.append(_coerce(json.loads(msg.value()), schema))
-            except Exception:
-                # A poison message must not take down the whole batch. Count it
-                # and move on; the count is asserted on downstream.
+            except Exception as exc:
                 stats["malformed"] += 1
+                quarantine_buf.append(quarantine_record(msg.value(), topic, ingested_at, exc))
+                if len(quarantine_buf) >= batch_rows:
+                    flush()
+                    consumer.commit(asynchronous=False)
                 continue
 
             if len(buf) >= batch_rows:
@@ -157,10 +206,8 @@ def drain_topic(
                 consumer.commit(asynchronous=False)
             except Exception as exc:
                 from confluent_kafka import KafkaError, KafkaException
-                if (
-                    isinstance(exc, KafkaException)
-                    and exc.args[0].code() == KafkaError._NO_OFFSET
-                ):
+
+                if isinstance(exc, KafkaException) and exc.args[0].code() == KafkaError._NO_OFFSET:
                     pass
                 else:
                     raise
@@ -187,7 +234,7 @@ def main() -> None:
             schema=schema,
             dataset=dataset,
             settings=s,
-            group_id=f"naijapay-ingest-{dataset}-{args.group_suffix}",
+            group_id=f"settlement-ingest-{dataset}-{args.group_suffix}",
             idle_timeout_s=args.idle_timeout,
         )
         print(f"{dataset}: {results[dataset]}")

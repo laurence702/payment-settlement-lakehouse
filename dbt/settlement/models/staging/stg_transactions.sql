@@ -36,9 +36,13 @@ renamed as (
 
         cast(created_at   as timestamp) as created_at,
         cast(updated_at   as timestamp) as updated_at,
+        cast(successful_at as timestamp) as successful_at,
         cast(ingested_at  as timestamp) as ingested_at,
         cast(event_date   as date)      as event_date,
         cast(arrival_lag_seconds as bigint) as arrival_lag_seconds,
+        cast(settlement_lag_days as integer) as settlement_lag_days,
+        cast(expected_settlement_date as date) as expected_settlement_date,
+        cast(settlement_source_watermark_at as timestamp) as settlement_source_watermark_at,
 
         is_terminal,
         status = 'success'  as is_success,

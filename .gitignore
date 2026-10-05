@@ -5,9 +5,9 @@ __pycache__/
 .venv/
 venv/
 logs/
-dbt/naijapay/target/
-dbt/naijapay/dbt_packages/
-dbt/naijapay/logs/
+dbt/*/target/
+dbt/*/dbt_packages/
+dbt/*/logs/
 data/local/
 *.duckdb
 *.duckdb.wal
@@ -16,3 +16,8 @@ data/local/
 
 *.log
 .user.yml
+*.bak
+HANDOVER.md
+
+# make verify evidence
+verify-report/

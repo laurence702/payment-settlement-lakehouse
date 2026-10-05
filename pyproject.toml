@@ -1,7 +1,7 @@
 [project]
-name = "naijapay"
+name = "settlement"
 version = "0.1.0"
-description = "Nigerian payments settlement reconciliation lakehouse"
+description = "Payment settlement reconciliation lakehouse"
 requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
