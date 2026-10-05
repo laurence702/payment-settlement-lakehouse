@@ -108,7 +108,7 @@ def drain_topic(
     dataset: str,
     settings: Settings,
     group_id: str,
-    max_messages: int = 500_000,
+    max_messages: int | None = None,
     idle_timeout_s: float = 10.0,
     batch_rows: int = 25_000,
 ) -> dict:
@@ -168,7 +168,7 @@ def drain_topic(
         part_no += 1
 
     try:
-        while stats["consumed"] < max_messages:
+        while max_messages is None or stats["consumed"] < max_messages:
             msg = consumer.poll(1.0)
             if msg is None:
                 if datetime.now(UTC) >= deadline:
