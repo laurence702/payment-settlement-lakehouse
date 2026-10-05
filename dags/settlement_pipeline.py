@@ -12,6 +12,8 @@ schedule when it runs somewhere that is meant to be always on.
 
 from __future__ import annotations
 
+import os
+
 import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import dag, task
@@ -36,9 +38,9 @@ DEFAULT_ARGS = {
     default_args=DEFAULT_ARGS,
     tags=["settlement", "lakehouse", "portfolio"],
     params={
-        "event_count": 50000,
-        "days": 14,
-        "seed": 20260909,
+        "event_count": int(os.getenv("GEN_EVENT_COUNT", "50000")),
+        "days": int(os.getenv("GEN_DAYS", "14")),
+        "seed": int(os.getenv("GEN_SEED", "20260909")),
         # Bumping this makes the ingest task re-read the topics from the
         # beginning, because it joins a brand new consumer group. Without it, a
         # second run legitimately finds nothing left to consume.
@@ -73,7 +75,7 @@ def settlement_pipeline():
             raise RuntimeError(
                 "cannot reach: " + "; ".join(unreachable) + ". "
                 "On a 6 GB VM these profiles are usually not all up at once. "
-                "Check `make ps` in the shared-infra repo."
+                "Check `make ps`."
             )
         return {name: f"{h}:{p}" for name, (h, p) in targets.items()}
 
@@ -132,7 +134,7 @@ def settlement_pipeline():
         """Dedupe, collapse to one row per transaction, derive NGN amounts.
 
         Runs in local mode inside this task's process. See the memory notes in
-        the shared-infra .env: the Spark driver heap lives under the Airflow
+        the .env file: the Spark driver heap lives under the Airflow
         scheduler container's limit, which is why the scheduler gets 1.8 GB.
         """
         import os
