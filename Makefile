@@ -87,8 +87,8 @@ mem:  ## Memory use against the 6 GB budget
 logs:  ## Tail airflow logs (S=service to narrow)
 	@COMPOSE_PROFILES=airflow $(COMPOSE) logs -f --tail=100 $(S)
 
-dag-trigger:  ## Trigger the pipeline DAG
-	@docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline
+dag-trigger:  ## Trigger the pipeline DAG (pass ARGS to customize, e.g. ARGS='--conf "{\"event_count\": 500000}"')
+	@docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline $(ARGS)
 
 dag-logs:  ## Follow the most recent DAG run
 	@docker exec np_airflow_scheduler airflow dags list-runs -d settlement_pipeline | head -5
