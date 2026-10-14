@@ -97,7 +97,7 @@ select
     end as source_freshness_status,
 
     case
-        when status = 'reversed' and settlement_id is not null and settled_at < succeeded_at
+        when status = 'reversed' and settlement_id is not null
             then 'reversed_after_settlement'
         when settlement_id is null
              and settlement_source_watermark_at::date < expected_settlement_date
@@ -120,7 +120,7 @@ select
 
     case
         when settlement_id is null then amount_ngn_kobo - fee_ngn_kobo
-        when status = 'reversed' and settled_at < succeeded_at then 0
+        when status = 'reversed' and settlement_id is not null then 0
         else greatest(0, amount_ngn_kobo - fee_ngn_kobo - settled_net_kobo)
     end as outstanding_net_kobo
 
