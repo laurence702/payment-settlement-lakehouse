@@ -39,24 +39,11 @@ from settlement.config import Settings, get_settings
 from settlement.schemas import STATUS_RANK
 
 
-def _s3(settings: Settings):
-    from pyarrow import fs as pafs
-
-    host, _, port = settings.s3_endpoint.partition(":")
-    return pafs.S3FileSystem(
-        access_key=settings.s3_access_key,
-        secret_key=settings.s3_secret_key,
-        endpoint_override=f"{host}:{port or '9000'}",
-        scheme="http",
-        allow_bucket_creation=False,
-    )
-
-
 def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
     """Pull every parquet object under a prefix into a local directory."""
     from pyarrow import fs as pafs
 
-    s3 = _s3(settings)
+    s3 = settings.s3_filesystem()
     dest.mkdir(parents=True, exist_ok=True)
     selector = pafs.FileSelector(f"{bucket}/{prefix}", recursive=True, allow_not_found=True)
     n = 0
@@ -72,7 +59,7 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
 
 
 def _upload(settings: Settings, src_dir: Path, bucket: str, prefix: str) -> int:
-    s3 = _s3(settings)
+    s3 = settings.s3_filesystem()
     with contextlib.suppress(Exception):
         s3.delete_dir_contents(f"{bucket}/{prefix}", missing_dir_ok=True)
     n = 0

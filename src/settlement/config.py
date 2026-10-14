@@ -56,6 +56,18 @@ class Settings:
     def s3_uri(self, bucket: str, key: str = "") -> str:
         return f"s3://{bucket}/{key}".rstrip("/")
 
+    def s3_filesystem(self):
+        from pyarrow import fs as pafs
+
+        host, _, port = self.s3_endpoint.partition(":")
+        return pafs.S3FileSystem(
+            access_key=self.s3_access_key,
+            secret_key=self.s3_secret_key,
+            endpoint_override=f"{host}:{port or '9000'}",
+            scheme="http",
+            allow_bucket_creation=False,
+        )
+
 
 def get_settings() -> Settings:
     return Settings()

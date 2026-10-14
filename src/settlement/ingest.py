@@ -24,7 +24,6 @@ from datetime import UTC, datetime, timedelta
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pyarrow import fs as pafs
 
 from settlement.config import Settings, get_settings
 from settlement.schemas import settlement_event_schema, transaction_event_schema
@@ -65,17 +64,6 @@ def _quarantine_schema() -> pa.Schema:
             pa.field("raw_payload", pa.string(), nullable=False),
             pa.field("payload_truncated", pa.bool_(), nullable=False),
         ]
-    )
-
-
-def _s3(settings: Settings) -> pafs.S3FileSystem:
-    host, _, port = settings.s3_endpoint.partition(":")
-    return pafs.S3FileSystem(
-        access_key=settings.s3_access_key,
-        secret_key=settings.s3_secret_key,
-        endpoint_override=f"{host}:{port or '9000'}",
-        scheme="http",
-        allow_bucket_creation=False,
     )
 
 
@@ -128,7 +116,7 @@ def drain_topic(
     )
     consumer.subscribe([topic])
 
-    s3 = _s3(settings)
+    s3 = settings.s3_filesystem()
     ingested_at = datetime.now(UTC)
     partition_date = ingested_at.date().isoformat()
 

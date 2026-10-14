@@ -87,3 +87,10 @@ def test_defaults_point_at_the_current_service_names(monkeypatch):
     assert s.s3_endpoint == "seaweedfs:8333"
     assert s.kafka_bootstrap == "kafka:19092"
     assert "minio" not in s.s3_endpoint
+
+
+def test_s3_filesystem_initializes_with_configured_endpoint(settings):
+    from pyarrow import fs as pafs
+
+    fs = settings.s3_filesystem()
+    assert isinstance(fs, pafs.S3FileSystem)
