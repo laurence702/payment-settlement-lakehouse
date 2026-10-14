@@ -151,6 +151,7 @@ def test_reconciliation_statuses_are_amount_and_source_aware(dbt_run):
     assert statuses.get("matched", 0) > 0
     assert statuses.get("missing_settlement", 0) > 0
     assert statuses.get("unverified_source", 0) > 0
+    assert statuses.get("reversed_after_settlement", 0) > 0
     amount_mismatch_statuses = ("partial_settlement", "short_paid", "overpaid")
     assert sum(statuses.get(status, 0) for status in amount_mismatch_statuses) > 0
 
