@@ -1,7 +1,13 @@
 # Payment Settlement Lakehouse
 
 [![tests](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/tests.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![e2e](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/e2e.yml/badge.svg)](https://github.com/laurence702/payment-settlement-lakehouse/actions/workflows/e2e.yml)
+[![Apache Airflow](https://img.shields.io/badge/Airflow-3.3.1-017CEE?logo=apacheairflow&logoColor=white)](https://airflow.apache.org/)
+[![Apache Kafka](https://img.shields.io/badge/Kafka-4.3.1_(KRaft)-231F20?logo=apachekafka&logoColor=white)](https://kafka.apache.org/)
+[![Apache Spark](https://img.shields.io/badge/PySpark-4.2-E25A1C?logo=apachespark&logoColor=white)](https://spark.apache.org/)
+[![dbt DuckDB](https://img.shields.io/badge/dbt--duckdb-1.11-FF694B?logo=dbt&logoColor=white)](https://docs.getdbt.com/)
+[![ClickHouse](https://img.shields.io/badge/ClickHouse-25.8-FFCC01?logo=clickhouse&logoColor=black)](https://clickhouse.com/)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Payment Settlement Lakehouse is a local, production-shaped data pipeline for
 reconciling **synthetic Paystack/Flutterwave-shaped events**. It models how a
@@ -23,6 +29,8 @@ The result is a synthetic reconciliation signal. It does not prove that money
 reached a merchant bank account.
 
 ## Architecture
+
+![Architecture Diagram](docs/assets/architecture.png)
 
 ```mermaid
 flowchart LR
@@ -55,12 +63,12 @@ flowchart LR
 
 The local stack is Kafka, SeaweedFS-compatible object storage (S3-API), PySpark,
 dbt with DuckDB, ClickHouse, and Airflow. It is designed for a 6 GB Docker VM
-(Colima on Apple Silicon); see [ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
+(e.g., Docker Desktop or Colima); see [ADR 0003](docs/adr/0003-profiles-and-the-6gb-budget.md).
 
 ## Benchmarks
 
-Numbers from the last successful end-to-end run on an M1 MacBook inside a 6 GB
-Colima VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
+Numbers from the last successful end-to-end run inside a 6 GB
+Docker VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
 
 | Metric | Value |
 |---|---|
@@ -74,7 +82,7 @@ Colima VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
 | Missing settlement | 2,731 transactions |
 | Amount-mismatched rows | 3,054 rows |
 | Merchants / Customers / Days | 40 / 95,085 / 14 |
-| Automated tests | **49** (unit + Spark + dbt) |
+| Automated tests | **52** (unit + Spark + dbt) |
 
 ## Data and reconciliation flow
 
@@ -194,9 +202,9 @@ Implemented in v0.2:
 - Quality-check grain fix: assertion #4 now mirrors the mart grain, including
   `reversed_after_settlement` rows present in `fct_settlements`.
 
-Benchmark (100k events, 6 GB VM, M1 MacBook):
+Benchmark (100k events, 6 GB VM):
 75-second end-to-end run · ₦1.6B total value · ₦51.3M synthetic outstanding
-exposure surfaced · 93.4% match rate · 49 automated tests.
+exposure surfaced · 93.4% match rate · 52 automated tests.
 
 Later real-world requirements include signed provider webhooks and report/API
 ingestion, trusted completeness contracts and cutoffs, payout adjustments and

@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Publish payment-settlement-lakehouse (and its sibling platform repo) to GitHub.
 #
-# Run from ~/development/Data_Engineering/payment-settlement-lakehouse
+# Run from the project root directory
 # Nothing here is destructive until STEP 3. Steps 0-2 only read.
 
 set -euo pipefail
 
 OWNER="laurence702"
+AUTHOR="Laurence Igbokwe"
 REPO="payment-settlement-lakehouse"
 INFRA="../data-engineering-shared-infra"
 
@@ -64,7 +65,7 @@ git remote get-url origin >/dev/null 2>&1 || \
   gh repo create "$OWNER/$REPO" --public --source=. --remote=origin --push
 
 gh repo edit "$OWNER/$REPO" \
-  --description "Settlement reconciliation for Nigerian card and bank-transfer payments. Kafka to Spark to dbt/DuckDB to ClickHouse, orchestrated by Airflow, built to run inside a 6 GB VM. 35 tests, 5 ADRs, and a known-gaps section." \
+  --description "Settlement reconciliation for Nigerian card and bank-transfer payments. Kafka to Spark to dbt/DuckDB to ClickHouse, orchestrated by Airflow, built to run inside a 6 GB VM. 52 tests, 5 ADRs, and a known-gaps section." \
   --homepage "https://keonix.dev" \
   --enable-issues \
   --enable-wiki=false \
