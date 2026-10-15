@@ -6,8 +6,8 @@ Status: accepted (2026-09-09)
 
 The original compose ran `confluentinc/cp-zookeeper:7.5.0` alongside Kafka, used
 `:latest` for six images, carried an obsolete `version: '3.8'` key, and hardcoded
-`/Users/laurence` into three bind mounts on a machine whose home is
-`/Users/laurence`.
+absolute host paths into three bind mounts, breaking portability across
+different developer workstations.
 
 ## Decision
 
@@ -17,7 +17,7 @@ node in KRaft mode with combined `broker,controller` roles.
 
 **Two client listeners.** `INTERNAL` on 19092 advertised as `kafka:19092` for
 containers, `EXTERNAL` on 9092 advertised as `localhost:9092` for tools on the
-Mac. A single listener cannot be correct for both, and getting this wrong is the
+host. A single listener cannot be correct for both, and getting this wrong is the
 most common reason a local Kafka appears to work from inside Docker and hangs
 from outside it.
 
@@ -27,8 +27,8 @@ registry, without pulling, so a bad tag fails in seconds rather than eight
 minutes into a pull.
 
 **No hardcoded paths.** `INFRA_ROOT` and `PROJECT_ROOT` are computed by
-`make bootstrap` on the machine that runs it. `make preflight` greps for
-`/Users/laurence` and fails if it ever comes back.
+`make bootstrap` on the machine that runs it. `make preflight` scans for
+hardcoded host paths and fails if any are detected.
 
 **Topic auto-creation is off.** Topics are created explicitly with declared
 partition counts. Auto-create is convenient until a typo in a producer silently

@@ -10,7 +10,7 @@ bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; fail=1; }
 echo "preflight"
 
 command -v docker >/dev/null 2>&1 || { bad "docker CLI not on PATH"; exit 1; }
-docker info >/dev/null 2>&1 || { bad "docker daemon unreachable. Run: colima start"; exit 1; }
+docker info >/dev/null 2>&1 || { bad "docker daemon unreachable. Please start Docker (e.g. colima start or Docker Desktop)"; exit 1; }
 ok "docker daemon reachable"
 
 # Keep stderr. Reporting "plugin not found" for any empty output once accused
@@ -64,7 +64,7 @@ if   [ "$mem_mib" -ge 7600 ]; then
 elif [ "$mem_mib" -ge 5600 ]; then
   warn "VM memory ${mem_disp} GiB. This is the designed target (--memory 6) and the ~5.5 GB of limits fit, but with no slack. See docs/adr/0003."
 else
-  bad "VM memory ${mem_disp} GiB is below the budget in docs/adr/0003. colima stop && colima start --cpu 4 --memory 6 --disk 60"
+  bad "VM memory ${mem_disp} GiB is below the budget in docs/adr/0003. Allocate at least 6 GB memory to your Docker VM (e.g. colima start --cpu 4 --memory 6 --disk 60 or Docker Desktop Settings -> Resources)"
 fi
 
 cpus=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
@@ -119,9 +119,9 @@ check_port "${PORT_KAFKA:-9092}"             kafka
 check_port "${PORT_REDIS:-6379}"             redis
 check_port "${PORT_AIRFLOW:-8081}"           airflow
 
-# The bug this repo was born with.
-if grep -rq '/Users/laurence' --include='*.yml' --include='*.yaml' . 2>/dev/null; then
-  bad "a hardcoded /Users/laurence path is still present"
+# The bug this repo was born with: hardcoded host paths breaking portability.
+if grep -rqE '(/Users/[a-zA-Z0-9_-]+|/home/[a-zA-Z0-9_-]+)' --include='*.yml' --include='*.yaml' . 2>/dev/null; then
+  bad "a hardcoded absolute home path is present in compose/config files"
 else ok "no hardcoded home directories"; fi
 
 # Image pins. This was a separate target you had to remember to run, until a

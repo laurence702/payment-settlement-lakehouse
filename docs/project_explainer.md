@@ -1,4 +1,4 @@
-# Payment Settlement Lakehouse Settlement Lakehouse — Project Explainer
+# Payment Settlement Lakehouse — Project Explainer
 
 Two perspectives on the same system: one for anyone curious, one for a
 technical interview.
