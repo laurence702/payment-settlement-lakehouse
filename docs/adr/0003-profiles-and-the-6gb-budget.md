@@ -4,7 +4,7 @@ Status: accepted (2026-09-09)
 
 ## Context
 
-Colima is configured with `--cpu 4 --memory 6 --disk 60` on a 16 GB MacBook.
+The container runtime VM is configured with 4 CPUs, 6 GB memory, and 60 GB disk.
 The original shared-infra compose started ten services unconditionally,
 including a Zookeeper that Kafka 4.x no longer supports. Nothing declared a
 memory limit, so the first container to allocate aggressively got the RAM and
@@ -48,8 +48,8 @@ and the `.env` comments say so at the point of change.
 
 * There is no `make up-all` target, on purpose.
 * `make preflight` checks free memory, disk inside the VM, compose version, and
-  host port collisions before anything is pulled. This machine runs Herd,
-  native Postgres 13/14/15 and Mongo, so 5432 and 3000 are frequent casualties;
-  Grafana is mapped to 3001 and ClickHouse's native port to 9100 because MinIO
-  already owns 9000.
+  host port collisions before anything is pulled. Local development environments
+  frequently run native background daemons (e.g. Postgres, Redis, local web servers);
+  mapped ports are configured to avoid standard collisions (e.g. ClickHouse native port
+  remapped to 9100).
 * `make mem` prints live usage against the budget, so drift is visible.

@@ -16,7 +16,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # Resolve JAVA_HOME from the installed java rather than hardcoding an arch path,
-# so this image builds on both Apple Silicon and x86 without edits.
+# so this image builds on both ARM64 and x86_64 architectures without edits.
 RUN JH="$(dirname "$(dirname "$(readlink -f "$(command -v java)")")")" \
  && echo "JAVA_HOME=${JH}" > /etc/profile.d/java.sh \
  && ln -sfn "${JH}" /opt/java-home
