@@ -19,6 +19,7 @@ data/local/
 *.bak
 HANDOVER.md
 *HANDOFF*.md
+docs/assets/*prompt*
 
 # make verify evidence
 verify-report*/
