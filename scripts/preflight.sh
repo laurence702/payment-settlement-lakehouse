@@ -120,7 +120,8 @@ check_port "${PORT_REDIS:-6379}"             redis
 check_port "${PORT_AIRFLOW:-8081}"           airflow
 
 # The bug this repo was born with: hardcoded host paths breaking portability.
-if grep -rqE '(/Users/[a-zA-Z0-9_-]+|/home/[a-zA-Z0-9_-]+)' --include='*.yml' --include='*.yaml' . 2>/dev/null; then
+# Filter out standard in-container paths (/home/airflow).
+if grep -rnE '(/Users/[a-zA-Z0-9_-]+|/home/[a-zA-Z0-9_-]+)' --include='*.yml' --include='*.yaml' . 2>/dev/null | grep -v '/home/airflow' | grep -q .; then
   bad "a hardcoded absolute home path is present in compose/config files"
 else ok "no hardcoded home directories"; fi
 

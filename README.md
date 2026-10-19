@@ -30,7 +30,7 @@ reached a merchant bank account.
 
 ## Architecture
 
-![Architecture Diagram](docs/assets/architecture.png)
+![Architecture Diagram](docs/assets/architecture-diagram.png)
 
 ```mermaid
 flowchart LR
