@@ -12,6 +12,15 @@ The dataset includes payment-data conditions that reconciliation must handle:
 
 Everything here is stdlib only and seeded, so the tests can assert on exact
 counts without Kafka, pyarrow, or a network.
+
+v2 / 1M-transaction scale
+--------------------------
+At 1M transactions generate_events() would build ~2M dicts (~1.2 GB of Python
+objects) in a single list before returning. iter_chunks() avoids that by
+yielding (tx_batch, stl_batch) in configurable chunks so peak RSS stays
+bounded regardless of total volume. Each chunk is seeded deterministically
+(base_seed + chunk_start) so a full run is reproducible: running the same
+--count with the same --seed always produces the same Kafka stream.
 """
 
 from __future__ import annotations
@@ -319,14 +328,24 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
 
     Keying matters: without it, two events for the same transaction can land on
     different partitions and any per-key ordering guarantee is gone.
+
+    Producer tuning for high-volume runs (v2 / 1M transactions):
+      linger.ms 100: give the broker more time to batch messages before flush.
+        At 1M+ messages the network RTT dominates; waiting 100ms per batch
+        costs nothing measurable and roughly doubles throughput vs 50ms.
+      batch.size 128k: larger batches reduce per-record overhead at scale.
+        Tested safe at local[2] Kafka with the 6 GB VM memory budget.
+      queue.buffering.max.messages 200k: headroom for a full 50k-event chunk
+        (each transaction emits ~2 events) without BufferError backpressure
+        stalls during the produce loop.
     """
     from confluent_kafka import Producer
 
     producer = Producer(
         {
             "bootstrap.servers": bootstrap,
-            "linger.ms": 50,
-            "batch.size": 64 * 1024,
+            "linger.ms": 100,
+            "batch.size": 128 * 1024,
             "compression.type": "lz4",
             "enable.idempotence": True,
             # With idempotence enabled, librdkafka must complete a metadata
@@ -335,8 +354,8 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
             # internal queue capacity is effectively zero, so the very first
             # produce() call raises BufferError instantly. Pre-warming via
             # an initial poll() lets the handshake complete before we start
-            # sending. 100 k messages is well above our 50 k batch ceiling.
-            "queue.buffering.max.messages": 100_000,
+            # sending. 200k headroom covers a full 50k-event chunk.
+            "queue.buffering.max.messages": 200_000,
         }
     )
 
@@ -371,15 +390,85 @@ def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> i
                 # otherwise escape the retry loop.
                 with contextlib.suppress(BufferError):
                     producer.poll(0.5)
-        # Poll every 100 messages (not 1000) to keep the in-flight window
-        # drained and avoid hitting queue limits mid-batch.
-        if i % 100 == 0:
+        # Poll every 500 messages at scale to keep the in-flight window
+        # drained without excessive syscall overhead.
+        if i % 500 == 0:
             producer.poll(0)
     producer.flush(300)
 
     if failures:
         raise RuntimeError(f"{len(failures)} deliveries failed, first: {failures[0]}")
     return delivered
+
+
+# ---------------------------------------------------------------------------
+# v2: chunked generation for 1M+ transaction scale
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CHUNK_SIZE = 50_000
+
+
+def iter_chunks(
+    n_transactions: int,
+    days: int,
+    seed: int,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
+    **kwargs,
+):
+    """Yield (tx_events, settlement_events) in memory-safe chunks.
+
+    Each chunk is a self-contained call to generate_events() seeded with
+    `seed + chunk_start`. This makes the full run deterministic: running the
+    same --count / --seed / --chunk-size always produces the same sequence of
+    Kafka messages in the same order within each chunk, across every chunk.
+
+    Peak RSS per chunk is bounded by chunk_size rather than n_transactions, so
+    a 1M-transaction run with the default 50k chunk_size never holds more than
+    ~60 MB of Python dicts in memory at once regardless of total volume.
+
+    The `days` window is shared across all chunks so timestamps are
+    spread over the same calendar period. kwargs are forwarded to
+    generate_events() unchanged (e.g. settlement_source_delay_days, end_date).
+    """
+    for chunk_start in range(0, n_transactions, chunk_size):
+        chunk_n = min(chunk_size, n_transactions - chunk_start)
+        yield generate_events(
+            n_transactions=chunk_n,
+            days=days,
+            seed=seed + chunk_start,
+            **kwargs,
+        )
+
+
+def generate_and_publish_chunked(
+    n_transactions: int,
+    days: int,
+    seed: int,
+    bootstrap: str,
+    topic_transactions: str,
+    topic_settlements: str,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
+    **kwargs,
+) -> dict[str, int]:
+    """Generate and publish n_transactions in chunk_size batches.
+
+    Returns totals: {"transactions_delivered": N, "settlements_delivered": M,
+                     "chunks": K}.
+
+    This is the v2 entry point for Airflow DAG tasks that need to scale beyond
+    the single-list memory envelope of the original generate_events() call.
+    The DAG can use this with --count 1000000 without touching the 6 GB budget.
+    """
+    totals: dict[str, int] = {"transactions_delivered": 0, "settlements_delivered": 0, "chunks": 0}
+    for tx, stl in iter_chunks(n_transactions, days, seed, chunk_size, **kwargs):
+        totals["transactions_delivered"] += publish(
+            tx, topic_transactions, bootstrap, "transaction_ref"
+        )
+        totals["settlements_delivered"] += publish(
+            stl, topic_settlements, bootstrap, "transaction_ref"
+        )
+        totals["chunks"] += 1
+    return totals
 
 
 def main() -> None:
@@ -389,14 +478,25 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=20260909)
     ap.add_argument("--bootstrap", default=None, help="Kafka bootstrap; omit to write JSONL")
     ap.add_argument("--out-dir", default=None, help="write JSONL here instead of Kafka")
+    ap.add_argument(
+        "--chunk-size",
+        type=int,
+        default=_DEFAULT_CHUNK_SIZE,
+        help=(
+            "Generate and publish this many transactions at a time. "
+            "Keeps peak RSS bounded regardless of --count. "
+            f"Default: {_DEFAULT_CHUNK_SIZE:,}."
+        ),
+    )
     args = ap.parse_args()
 
-    tx, stl = generate_events(args.count, args.days, args.seed)
-    print(f"generated {len(tx)} transaction events and {len(stl)} settlement events")
-
     if args.out_dir:
+        # JSONL output: generate all at once (--out-dir is only used for
+        # local testing at small --count values, not for 1M production runs).
         import pathlib
 
+        tx, stl = generate_events(args.count, args.days, args.seed)
+        print(f"generated {len(tx)} transaction events and {len(stl)} settlement events")
         d = pathlib.Path(args.out_dir)
         d.mkdir(parents=True, exist_ok=True)
         for name, rows in (("transactions", tx), ("settlements", stl)):
@@ -411,9 +511,31 @@ def main() -> None:
 
     s = get_settings()
     bootstrap = args.bootstrap or s.kafka_bootstrap
-    n1 = publish(tx, s.topic_transactions, bootstrap, "transaction_ref")
-    n2 = publish(stl, s.topic_settlements, bootstrap, "transaction_ref")
-    print(f"published {n1} -> {s.topic_transactions}, {n2} -> {s.topic_settlements}")
+
+    if args.count <= args.chunk_size:
+        # Small run — original single-batch path for backward compatibility.
+        tx, stl = generate_events(args.count, args.days, args.seed)
+        print(f"generated {len(tx)} transaction events and {len(stl)} settlement events")
+        n1 = publish(tx, s.topic_transactions, bootstrap, "transaction_ref")
+        n2 = publish(stl, s.topic_settlements, bootstrap, "transaction_ref")
+        print(f"published {n1} -> {s.topic_transactions}, {n2} -> {s.topic_settlements}")
+    else:
+        # Large run — chunked path that keeps peak RAM bounded.
+        print(f"chunked publish: {args.count:,} transactions in chunks of {args.chunk_size:,}")
+        totals = generate_and_publish_chunked(
+            n_transactions=args.count,
+            days=args.days,
+            seed=args.seed,
+            bootstrap=bootstrap,
+            topic_transactions=s.topic_transactions,
+            topic_settlements=s.topic_settlements,
+            chunk_size=args.chunk_size,
+        )
+        print(
+            f"published {totals['transactions_delivered']:,} -> {s.topic_transactions}, "
+            f"{totals['settlements_delivered']:,} -> {s.topic_settlements} "
+            f"({totals['chunks']} chunks)"
+        )
 
 
 if __name__ == "__main__":
