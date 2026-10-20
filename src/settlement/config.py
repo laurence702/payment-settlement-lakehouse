@@ -69,5 +69,14 @@ class Settings:
         )
 
 
+VOLUME_PRESETS: dict[str, int] = {
+    "50k": 50_000,
+    "500k": 500_000,
+    "1M": 1_000_000,
+    "1m": 1_000_000,
+}
+
+
 def get_settings() -> Settings:
     return Settings()
+

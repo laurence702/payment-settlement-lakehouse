@@ -97,8 +97,8 @@ def drain_topic(
     settings: Settings,
     group_id: str,
     max_messages: int | None = None,
-    idle_timeout_s: float = 10.0,
-    batch_rows: int = 25_000,
+    idle_timeout_s: float = 12.0,
+    batch_rows: int = 50_000,
 ) -> dict:
     """Consume `topic` until it goes quiet, writing Parquet to the raw bucket."""
     from confluent_kafka import Consumer, KafkaError
@@ -112,6 +112,10 @@ def drain_topic(
             "enable.auto.commit": False,
             "max.poll.interval.ms": 300_000,
             "session.timeout.ms": 45_000,
+            # Throughput tuning for 500k-1M scale
+            "fetch.message.max.bytes": 10_485_760,
+            "max.partition.fetch.bytes": 5_242_880,
+            "queued.min.messages": 100_000,
         }
     )
     consumer.subscribe([topic])
@@ -208,7 +212,8 @@ def drain_topic(
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--group-suffix", default="v1")
-    ap.add_argument("--idle-timeout", type=float, default=10.0)
+    ap.add_argument("--idle-timeout", type=float, default=12.0)
+    ap.add_argument("--batch-rows", type=int, default=50_000)
     args = ap.parse_args()
 
     s = get_settings()
@@ -224,6 +229,7 @@ def main() -> None:
             settings=s,
             group_id=f"settlement-ingest-{dataset}-{args.group_suffix}",
             idle_timeout_s=args.idle_timeout,
+            batch_rows=args.batch_rows,
         )
         print(f"{dataset}: {results[dataset]}")
 

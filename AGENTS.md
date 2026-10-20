@@ -54,6 +54,8 @@ assumption in the PR, and keep going.
 - Money is integer kobo end to end. Never floats.
 - Every change to a `src/` module comes with a test in `tests/`.
 - Do not edit `HANDOVER.md` as a status report. It is a narrative writeup.
+- **Strict Privacy & Gitignore Discipline:** Internal workflow ledgers, session logs, strategic notes, and memory files (including `docs/CENTRAL_MEMORY.md`, scratch directories, prompt drafts, and handoff summaries) contain sensitive workflow data. They must remain in `.gitignore` and **must NEVER be committed or pushed to any public or open-source repository**. Agents must verify `.gitignore` before staging.
+- **Maintain Central Memory (Local Only):** At the start of every session, read `docs/CENTRAL_MEMORY.md`. Whenever completing a milestone, generating key assets, or wrapping up a session, update `docs/CENTRAL_MEMORY.md` locally with accomplishments and next actions, ensuring it remains strictly untracked.
 
 ## Open issue (as of 2026-09-16)
 

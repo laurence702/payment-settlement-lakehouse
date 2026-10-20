@@ -26,6 +26,7 @@ Two decisions worth defending:
 from __future__ import annotations
 
 import argparse
+import contextlib
 from dataclasses import dataclass
 
 from settlement.config import Settings, get_settings
@@ -82,7 +83,7 @@ def _client(settings: Settings):
         password=settings.clickhouse_password,
         # Do not pin the database here: the CREATE DATABASE below has to be
         # able to run before the database exists.
-        settings={"max_execution_time": 300},
+        settings={"max_execution_time": 600},
     )
 
 
@@ -112,7 +113,14 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
     )
     client.command(
         f"INSERT INTO {shadow} "
-        "SETTINGS max_threads = 2, max_insert_block_size = 65536 "
+        "SETTINGS max_threads = 1, "
+        "max_insert_threads = 1, "
+        "input_format_parquet_enable_row_group_prefetch = 0, "
+        "remote_filesystem_read_prefetch = 0, "
+        "input_format_parquet_max_block_size = 32768, "
+        "max_insert_block_size = 32768, "
+        "min_insert_block_size_rows = 0, "
+        "min_insert_block_size_bytes = 0 "
         f"SELECT * FROM {s3}"
     )
     rows = client.command(f"SELECT count() FROM {shadow}")
@@ -137,6 +145,12 @@ def load_mart(client, settings: Settings, spec: MartSpec) -> dict:
     else:
         client.command(f"RENAME TABLE {shadow} TO {live}")
 
+    # Drop caches and purge memory between marts to stay under RSS limits
+    client.command("SYSTEM DROP MARK CACHE")
+    client.command("SYSTEM DROP UNCOMPRESSED CACHE")
+    with contextlib.suppress(Exception):
+        client.command("SYSTEM JEMALLOC PURGE")
+
     return {"table": spec.name, "rows": int(rows)}
 
 
@@ -145,6 +159,8 @@ def run(settings: Settings) -> list[dict]:
     client.command(f"CREATE DATABASE IF NOT EXISTS {settings.clickhouse_db}")
     client.command("SYSTEM DROP MARK CACHE")
     client.command("SYSTEM DROP UNCOMPRESSED CACHE")
+    with contextlib.suppress(Exception):
+        client.command("SYSTEM JEMALLOC PURGE")
     return [load_mart(client, settings, spec) for spec in MARTS]
 
 

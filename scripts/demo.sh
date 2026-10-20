@@ -31,8 +31,13 @@ step "creating kafka topics"
 step "unpausing and triggering the DAG"
 docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline >/dev/null
 RUN_ID="demo__$(date -u +%Y%m%dT%H%M%S)"
-CONF_JSON=$(printf '{"event_count": %d, "days": %d, "seed": %d}' \
-  "${GEN_EVENT_COUNT:-50000}" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+if [ -n "${GEN_PRESET:-}" ]; then
+  CONF_JSON=$(printf '{"preset": "%s", "days": %d, "seed": %d}' \
+    "$GEN_PRESET" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+else
+  CONF_JSON=$(printf '{"event_count": %d, "days": %d, "seed": %d}' \
+    "${GEN_EVENT_COUNT:-50000}" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+fi
 docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline \
   --run-id "$RUN_ID" --conf "$CONF_JSON"
 

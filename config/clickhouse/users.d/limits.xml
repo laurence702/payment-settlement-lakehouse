@@ -1,11 +1,10 @@
 <clickhouse>
     <profiles>
         <default>
-            <max_memory_usage>800000000</max_memory_usage>
+            <max_memory_usage>2000000000</max_memory_usage>
             <max_threads>4</max_threads>
             <use_uncompressed_cache>0</use_uncompressed_cache>
-            <!-- Fail loudly on a runaway query rather than swapping the VM. -->
-            <max_execution_time>300</max_execution_time>
+            <max_execution_time>600</max_execution_time>
         </default>
     </profiles>
     <users>
