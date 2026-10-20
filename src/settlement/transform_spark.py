@@ -76,24 +76,21 @@ def build_session(driver_memory: str, shuffle_partitions: int):
 
     return (
         SparkSession.builder.appName("settlement-raw-to-staged")
-        # local[2] instead of local[*]: all executor threads share the single
-        # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
-        # peak RSS of concurrent window-function shuffles exceeds the limit.
-        # Two threads halve in-flight memory at a modest throughput cost, which
-        # keeps the local pipeline within its 6 GB memory envelope.
+        # local[2] instead of local[*]: bounds executor concurrency so memory
+        # remains predictable and avoids executor shuffle spikes.
         .master("local[2]")
         .config("spark.driver.memory", driver_memory)
-        # The default of 200 shuffle partitions on a laptop produces 200 tiny
-        # files and spends more time on task overhead than on the actual work.
         .config("spark.sql.shuffle.partitions", str(shuffle_partitions))
         .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "33554432")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
         .config("spark.driver.host", "127.0.0.1")
-        # Reduce the fraction of heap Spark reserves for execution/storage so
-        # JVM metaspace + Python overhead fits within the container budget.
-        .config("spark.memory.fraction", "0.6")
-        .config("spark.memory.storageFraction", "0.3")
+        .config("spark.driver.maxResultSize", "512m")
+        .config("spark.cleaner.periodicGC.interval", "1min")
+        .config("spark.memory.fraction", "0.7")
+        .config("spark.memory.storageFraction", "0.2")
         .getOrCreate()
     )
 
@@ -232,7 +229,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--driver-memory", default=os.getenv("SPARK_DRIVER_MEMORY", "1g"))
     ap.add_argument(
-        "--shuffle-partitions", type=int, default=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "8"))
+        "--shuffle-partitions", type=int, default=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "16"))
     )
     args = ap.parse_args()
 

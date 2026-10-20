@@ -1,7 +1,6 @@
 <clickhouse>
-    <!-- Sized for a 1200m container inside a 6 GB Colima VM. ClickHouse will
-         happily assume it owns the machine otherwise and get OOM-killed. -->
-    <max_server_memory_usage>1200000000</max_server_memory_usage>
+    <!-- 0 delegates server memory ceiling to 90% of the container cgroup limit -->
+    <max_server_memory_usage>0</max_server_memory_usage>
     <mark_cache_size>67108864</mark_cache_size>
     <uncompressed_cache_size>0</uncompressed_cache_size>
     <listen_host>0.0.0.0</listen_host>
@@ -9,6 +8,16 @@
     <logger>
         <level>warning</level>
     </logger>
+    <query_log remove="1"/>
+    <trace_log remove="1"/>
+    <query_thread_log remove="1"/>
+    <query_views_log remove="1"/>
+    <part_log remove="1"/>
+    <metric_log remove="1"/>
+    <asynchronous_metric_log remove="1"/>
+    <processors_profile_log remove="1"/>
+    <opentelemetry_span_log remove="1"/>
+    <crash_log remove="1"/>
     <!-- Native Prometheus endpoint. This is why Prometheus has something real
          to scrape without bolting on an exporter sidecar. -->
     <prometheus>
