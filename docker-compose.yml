@@ -165,7 +165,13 @@ services:
     environment:
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
-      GOMEMLIMIT: "650MiB"
+      # GOMEMLIMIT is deliberately set ~256 MiB below mem_limit (MEM_S3).
+      # SeaweedFS runs master + volume + filer + S3 in one Go process. Go's GC
+      # cannot see kernel-mapped volume-file pages or goroutine stacks, so the
+      # real RSS always exceeds the Go heap. Without this gap the cgroup
+      # OOM-killer terminates the process the moment Spark's download burst
+      # pushes anon-rss over mem_limit. Confirmed via dmesg at 1M-event scale.
+      GOMEMLIMIT: "768MiB"
     ports:
       - "${PORT_S3_API}:8333"
       # Filer UI. The object browser MinIO's community console stopped shipping.

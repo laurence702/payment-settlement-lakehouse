@@ -30,13 +30,51 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import shutil
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from settlement.config import Settings, get_settings
 from settlement.schemas import STATUS_RANK
+
+log = logging.getLogger(__name__)
+
+
+def _copy_file_with_retry(s3, path: str, local: Path, attempts: int = 5) -> None:
+    """Stream one S3 object to *local*, retrying on transient connection failures.
+
+    SeaweedFS is a single-process all-in-one server (master + volume + filer +
+    S3). When its cgroup memory limit is breached the kernel kills the whole
+    process and `restart: unless-stopped` brings it back after a few seconds.
+    A bare ``open_input_stream`` call during that window raises an OSError
+    ("Could not connect to server") with no retry, failing the entire Spark
+    task. Exponential backoff here gives the container time to come back without
+    requiring an operator to manually re-trigger the DAG run.
+
+    Cap at 15 s so the total worst-case delay across five attempts is
+    1 + 2 + 4 + 8 + 15 = 30 s — negligible against a multi-minute Spark job.
+    """
+    for attempt in range(attempts):
+        try:
+            with s3.open_input_stream(path) as src, local.open("wb") as out:
+                shutil.copyfileobj(src, out)
+            return
+        except OSError as exc:
+            if attempt == attempts - 1:
+                raise
+            delay = min(2**attempt, 15)
+            log.warning(
+                "S3 download attempt %d/%d failed for %s (%s). Retrying in %ds.",
+                attempt + 1,
+                attempts,
+                path,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
 
 
 def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
@@ -52,8 +90,7 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
             continue
         safe_name = info.path.replace("/", "_")
         local = dest / f"{n:05d}_{safe_name}"
-        with s3.open_input_stream(info.path) as src, local.open("wb") as out:
-            shutil.copyfileobj(src, out)
+        _copy_file_with_retry(s3, info.path, local)
         n += 1
     return n
 
