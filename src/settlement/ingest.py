@@ -98,7 +98,7 @@ def drain_topic(
     group_id: str,
     max_messages: int | None = None,
     idle_timeout_s: float = 12.0,
-    batch_rows: int = 50_000,
+    batch_rows: int = 100_000,
 ) -> dict:
     """Consume `topic` until it goes quiet, writing Parquet to the raw bucket."""
     from confluent_kafka import Consumer, KafkaError
@@ -213,7 +213,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--group-suffix", default="v1")
     ap.add_argument("--idle-timeout", type=float, default=12.0)
-    ap.add_argument("--batch-rows", type=int, default=50_000)
+    ap.add_argument("--batch-rows", type=int, default=100_000)
     args = ap.parse_args()
 
     s = get_settings()
