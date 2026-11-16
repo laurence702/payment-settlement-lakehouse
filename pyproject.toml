@@ -6,9 +6,10 @@ requires-python = ">=3.11"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 markers = [
     "slow: needs a JVM (PySpark) or dbt. Excluded by default: `pytest -m 'not slow'`",
+    "e2e: drives the running stack through Airflow's UI. Lives in e2e/, run with `make e2e`.",
 ]
 addopts = "-q --strict-markers"
 

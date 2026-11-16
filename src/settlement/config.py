@@ -49,6 +49,17 @@ class Settings:
     )
     clickhouse_db: str = field(default_factory=lambda: _env("CLICKHOUSE_DB", "settlement"))
 
+    # --- Operations store (Postgres) ---------------------------------------
+    # Same server as the Airflow metadata database, its own database. See
+    # docs/adr/0007.
+    ops_db_host: str = field(default_factory=lambda: _env("POSTGRES_HOST", "postgres"))
+    ops_db_port: int = field(default_factory=lambda: int(_env("POSTGRES_PORT", "5432")))
+    ops_db_name: str = field(default_factory=lambda: _env("OPS_DB", "settlement_ops"))
+    ops_db_user: str = field(default_factory=lambda: _env("POSTGRES_USER", "dataeng"))
+    ops_db_password: str = field(
+        default_factory=lambda: _env("POSTGRES_PASSWORD", "dataeng_local_only")
+    )
+
     @property
     def s3_endpoint_url(self) -> str:
         return f"http://{self.s3_endpoint}"
@@ -67,6 +78,14 @@ class Settings:
             scheme="http",
             allow_bucket_creation=False,
         )
+
+
+VOLUME_PRESETS: dict[str, int] = {
+    "50k": 50_000,
+    "500k": 500_000,
+    "1M": 1_000_000,
+    "1m": 1_000_000,
+}
 
 
 def get_settings() -> Settings:

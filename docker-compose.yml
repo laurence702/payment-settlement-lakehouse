@@ -165,7 +165,13 @@ services:
     environment:
       AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
-      GOMEMLIMIT: "650MiB"
+      # GOMEMLIMIT is deliberately set ~256 MiB below mem_limit (MEM_S3).
+      # SeaweedFS runs master + volume + filer + S3 in one Go process. Go's GC
+      # cannot see kernel-mapped volume-file pages or goroutine stacks, so the
+      # real RSS always exceeds the Go heap. Without this gap the cgroup
+      # OOM-killer terminates the process the moment Spark's download burst
+      # pushes anon-rss over mem_limit. Confirmed via dmesg at 1M-event scale.
+      GOMEMLIMIT: "${S3_GOMEMLIMIT:-768MiB}"
     ports:
       - "${PORT_S3_API}:8333"
       # Filer UI. The object browser MinIO's community console stopped shipping.
@@ -311,6 +317,38 @@ services:
     networks: [data_network]
 
   # ========================= AIRFLOW =======================================
+  # Analyst console. Published on the loopback interface only: it has no
+  # authentication, so it must not be reachable from the network. See
+  # docs/adr/0007-ops-case-management.md.
+  ops-console:
+    image: ${OPS_IMAGE:-settlement/ops:local}
+    build:
+      context: .
+      dockerfile: docker/ops/Dockerfile
+    container_name: np_ops_console
+    profiles: [ "ops" ]
+    <<: [*restart, *logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      OPS_BIND_HOST: 0.0.0.0
+      OPS_PORT: "8080"
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      OPS_DB: ${OPS_DB:-settlement_ops}
+    ports:
+      - "127.0.0.1:${PORT_OPS:-8090}:8080"
+    mem_limit: ${MEM_OPS:-128m}
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/readyz', timeout=3)" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [data_network]
+
   airflow-init:
     <<: *airflow-common
     container_name: np_airflow_init

@@ -56,8 +56,15 @@ fi
 # Colima was told to allocate: the kernel reserves a slice first. --memory 6
 # shows up as ~5.8 GiB. Compare in MiB with headroom for that cut, and print a
 # decimal, because integer GiB arithmetic truncates 5.8 to 5 and then lies.
+# Kiri (and some other lightweight runtimes) may expose 0 for MemTotal via the
+# Docker API; fall back to /proc/meminfo inside the VM via a container, the
+# same technique used for disk below.
 mem_bytes=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)
 mem_mib=$(( mem_bytes / 1048576 ))
+if [ "$mem_mib" -eq 0 ]; then
+  mem_kb=$(docker run --rm --entrypoint sh alpine:3.20 -c "grep MemTotal /proc/meminfo | awk '{print \$2}'" 2>/dev/null || echo 0)
+  mem_mib=$(( mem_kb / 1024 ))
+fi
 mem_disp=$(awk "BEGIN{printf \"%.1f\", $mem_mib/1024}")
 if   [ "$mem_mib" -ge 7600 ]; then
   ok "VM memory ${mem_disp} GiB"
@@ -65,6 +72,20 @@ elif [ "$mem_mib" -ge 5600 ]; then
   warn "VM memory ${mem_disp} GiB. This is the designed target (--memory 6) and the ~5.5 GB of limits fit, but with no slack. See docs/adr/0003."
 else
   bad "VM memory ${mem_disp} GiB is below the budget in docs/adr/0003. Allocate at least 6 GB memory to your Docker VM (e.g. colima start --cpu 4 --memory 6 --disk 60 or Docker Desktop Settings -> Resources)"
+fi
+
+# The configured container ceilings against what the VM really has. Ceilings that sum past
+# the VM's memory are legitimate (peaks do not coincide) but leave no margin. MEM_KAFKA_HEAP is a JVM flag, not a ceiling.
+ceil_mib=$(grep -E '^MEM_[A-Z0-9_]+=[0-9]+[mg]$' .env 2>/dev/null | awk -F= '
+  { v=$2; u=substr(v,length(v)); n=substr(v,1,length(v)-1)+0; s+= (u=="g") ? n*1024 : n }
+  END { printf "%d", s }')
+if [ "${ceil_mib:-0}" -gt 0 ] && [ "$mem_mib" -gt 0 ]; then
+  ceil_disp=$(awk "BEGIN{printf \"%.1f\", $ceil_mib/1024}")
+  if [ "$ceil_mib" -gt "$mem_mib" ]; then
+    warn "container ceilings in .env sum to ${ceil_disp} GiB, above the VM's ${mem_disp} GiB. Services rarely peak together (the 6 GB default is oversubscribed by design, docs/adr/0003), but a spike can reach the kernel OOM-killer. Use a larger VM with: make profile PROFILE=large"
+  else
+    ok "container ceilings ${ceil_disp} GiB fit the VM's ${mem_disp} GiB"
+  fi
 fi
 
 cpus=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
@@ -118,6 +139,7 @@ check_port "${PORT_CLICKHOUSE_NATIVE:-9100}" clickhouse-native
 check_port "${PORT_KAFKA:-9092}"             kafka
 check_port "${PORT_REDIS:-6379}"             redis
 check_port "${PORT_AIRFLOW:-8081}"           airflow
+check_port "${PORT_OPS:-8090}"               ops-console
 
 # The bug this repo was born with: hardcoded host paths breaking portability.
 # Filter out standard in-container paths (/home/airflow).

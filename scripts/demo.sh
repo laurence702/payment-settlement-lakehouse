@@ -14,8 +14,12 @@ step "preflight"
 make -s preflight
 
 step "starting platform and airflow (~5.5 GB, this is the whole budget)"
-COMPOSE_PROFILES=core,stream,warehouse,airflow \
-  docker compose --env-file .env up -d
+# --build is a layer-cache no-op when nothing changed. It matters for the ops
+# console, whose code is copied into its image rather than bind-mounted: without
+# it the console can run older migrations than the DAG task that shares its
+# database, and the migration checksum guard (rightly) refuses to continue.
+COMPOSE_PROFILES=core,stream,warehouse,airflow,ops \
+  docker compose --env-file .env up -d --build
 
 step "waiting for airflow api-server to pass its healthcheck"
 for i in $(seq 1 60); do
@@ -31,8 +35,13 @@ step "creating kafka topics"
 step "unpausing and triggering the DAG"
 docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline >/dev/null
 RUN_ID="demo__$(date -u +%Y%m%dT%H%M%S)"
-CONF_JSON=$(printf '{"event_count": %d, "days": %d, "seed": %d}' \
-  "${GEN_EVENT_COUNT:-50000}" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+if [ -n "${GEN_PRESET:-}" ]; then
+  CONF_JSON=$(printf '{"preset": "%s", "days": %d, "seed": %d}' \
+    "$GEN_PRESET" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+else
+  CONF_JSON=$(printf '{"event_count": %d, "days": %d, "seed": %d}' \
+    "${GEN_EVENT_COUNT:-50000}" "${GEN_DAYS:-14}" "${GEN_SEED:-20260909}")
+fi
 docker exec np_airflow_scheduler airflow dags trigger settlement_pipeline \
   --run-id "$RUN_ID" --conf "$CONF_JSON"
 
@@ -97,5 +106,6 @@ Done.
   Airflow      http://localhost:${PORT_AIRFLOW}   (${AIRFLOW_ADMIN_USER} / ${AIRFLOW_ADMIN_PASSWORD})
   Files        http://localhost:${PORT_S3_UI}/buckets/   (SeaweedFS filer UI: raw/staged/marts)
   ClickHouse   http://localhost:${PORT_CLICKHOUSE_HTTP}/play
+  Ops console  http://127.0.0.1:${PORT_OPS:-8090}   (triage breaks; local only)
 
 MSG

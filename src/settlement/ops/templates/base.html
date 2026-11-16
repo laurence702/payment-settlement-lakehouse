@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Settlement ops{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #f6f7f9; --panel: #ffffff; --text: #1b1f24; --muted: #5b6672;
+      --line: #dde1e6; --accent: #0b5cad; --danger: #b42318; --warn: #8a5a00;
+      --ok: #1a6b3a; --chip: #eef1f4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #14171a; --panel: #1c2024; --text: #e8ebee; --muted: #9aa5b1;
+        --line: #2c333a; --accent: #6db1ff; --danger: #ff8a80; --warn: #f0b429;
+        --ok: #56c283; --chip: #262c32;
+      }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    header { background: var(--panel); border-bottom: 1px solid var(--line); }
+    .wrap { max-width: 1100px; margin: 0 auto; padding: 0 16px; }
+    header .wrap { display: flex; align-items: center; justify-content: space-between;
+                   height: 52px; }
+    header a { color: var(--text); text-decoration: none; font-weight: 600; }
+    main { padding: 20px 0 48px; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    h2 { font-size: 15px; margin: 24px 0 8px; color: var(--muted); font-weight: 600; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+             gap: 12px; margin-bottom: 20px; }
+    .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+            padding: 12px 14px; }
+    .card .label { color: var(--muted); font-size: 13px; }
+    .card .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+             overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
+             white-space: nowrap; }
+    th { color: var(--muted); font-size: 12px; font-weight: 600; text-transform: uppercase;
+         letter-spacing: .03em; }
+    tr:last-child td { border-bottom: 0; }
+    td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+    a { color: var(--accent); }
+    .chip { display: inline-block; padding: 1px 8px; border-radius: 999px;
+            background: var(--chip); font-size: 12px; }
+    .chip.OPEN, .chip.ESCALATED { color: var(--danger); }
+    .chip.MANUAL_REVIEW, .chip.EXPECTED_DELAY, .chip.drift { color: var(--warn); }
+    .chip.CLOSED, .chip.CLEARED { color: var(--ok); }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .filters a { padding: 4px 12px; border: 1px solid var(--line); border-radius: 999px;
+                 background: var(--panel); text-decoration: none; color: var(--text);
+                 font-size: 13px; }
+    .filters a.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+    .pager { display: flex; gap: 12px; align-items: center; margin-top: 12px;
+             color: var(--muted); }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 20px; margin: 0; }
+    dt { color: var(--muted); }
+    dd { margin: 0; font-variant-numeric: tabular-nums; }
+    form.action { display: grid; gap: 10px; max-width: 520px; }
+    label { font-size: 13px; color: var(--muted); }
+    input, select, textarea { width: 100%; padding: 7px 9px; border: 1px solid var(--line);
+      border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+    button { padding: 8px 14px; border: 0; border-radius: 6px; background: var(--accent);
+             color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+    .banner { border: 1px solid var(--warn); color: var(--warn); border-radius: 8px;
+              padding: 10px 14px; margin-bottom: 16px; background: var(--panel); }
+    .empty { padding: 28px; text-align: center; color: var(--muted); }
+    code { font-size: 12px; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <header><div class="wrap">
+    <a href="/">Settlement ops</a>
+    <span class="chip">local console, no authentication</span>
+  </div></header>
+  <main><div class="wrap">{% block content %}{% endblock %}</div></main>
+</body>
+</html>

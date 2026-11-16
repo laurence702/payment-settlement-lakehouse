@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ case.display_id }} · Settlement ops{% endblock %}
+{% block content %}
+<p><a href="/">← Triage queue</a></p>
+<h1>{{ case.display_id }}
+  <span class="chip {{ case.effective_status }}">{{ case.effective_status | replace('_', ' ') }}</span>
+</h1>
+
+{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+
+{% if case.drifted %}
+<div class="banner">
+  This decision was made when the case was <code>{{ case.decided_fingerprint }}</code>.
+  The latest pipeline run reports <code>{{ case.system_fingerprint }}</code>. Reopen the
+  case to review it against the new facts.
+</div>
+{% endif %}
+
+<div class="panel" style="padding: 14px 16px;">
+<dl>
+  <dt>Transaction</dt><dd>{{ case.transaction_ref }}</dd>
+  <dt>Merchant</dt><dd>{{ case.merchant_id }}</dd>
+  <dt>Break type</dt><dd>{{ case.break_type | replace('_', ' ') }}</dd>
+  <dt>Exposure (NGN)</dt><dd>{{ case.exposure_kobo | ngn }}</dd>
+  <dt>Charged (NGN)</dt><dd>{{ case.amount_ngn_kobo | ngn }}</dd>
+  <dt>Expected net (NGN)</dt><dd>{{ case.expected_net_kobo | ngn }}</dd>
+  <dt>Settled net (NGN)</dt><dd>{{ case.settled_net_kobo | ngn if case.settled_net_kobo is not none else "none received" }}</dd>
+  <dt>Channel / gateway / bank</dt><dd>{{ case.channel }} / {{ case.gateway }} / {{ case.bank_code or 'no bank leg' }}</dd>
+  <dt>Succeeded</dt><dd>{{ case.succeeded_date }}</dd>
+  <dt>Pipeline status</dt><dd>{{ case.system_status.value }}</dd>
+  <dt>First / last seen</dt><dd>{{ case.first_seen_at.strftime("%Y-%m-%d %H:%M") }} / {{ case.last_seen_at.strftime("%Y-%m-%d %H:%M") }} UTC</dd>
+  <dt>Case key</dt><dd><code>{{ case.case_id }}</code></dd>
+</dl>
+</div>
+
+<h2>Take action</h2>
+<div class="panel" style="padding: 14px 16px;">
+{% if allowed %}
+<form class="action" method="post" action="/cases/{{ case.case_id }}/actions">
+  <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
+  <div><label for="action">Action</label>
+    <select id="action" name="action" required>
+      {% for a in allowed %}<option value="{{ a }}"{% if a == selected %} selected{% endif %}>{{ a | replace('_', ' ') | lower }}</option>{% endfor %}
+    </select></div>
+  <div><label for="analyst">Your name</label>
+    <input id="analyst" name="analyst" maxlength="64" value="{{ analyst }}" required></div>
+  <div><label for="notes">Note (required to escalate, close or reopen)</label>
+    <textarea id="notes" name="notes" rows="3" maxlength="2000">{{ notes }}</textarea></div>
+  <div><button type="submit">Record action</button></div>
+</form>
+{% else %}
+  <div class="empty">No actions are available from this state.</div>
+{% endif %}
+</div>
+
+<h2>Audit trail</h2>
+<div class="panel">
+{% if actions %}
+<table>
+  <thead><tr><th>When (UTC)</th><th>Analyst</th><th>Action</th><th>Result</th><th>Note</th></tr></thead>
+  <tbody>
+  {% for a in actions %}
+    <tr>
+      <td>{{ a.created_at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ a.analyst }}</td>
+      <td>{{ a.action.value | replace('_', ' ') | lower }}</td>
+      <td>{{ a.resulting_status.value | replace('_', ' ') if a.resulting_status else "back to pipeline status" }}</td>
+      <td style="white-space: normal;">{{ a.notes }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <div class="empty">No actions recorded.</div>
+{% endif %}
+</div>
+{% endblock %}

@@ -30,13 +30,51 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import logging
 import shutil
 import tempfile
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from settlement.config import Settings, get_settings
 from settlement.schemas import STATUS_RANK
+
+log = logging.getLogger(__name__)
+
+
+def _copy_file_with_retry(s3, path: str, local: Path, attempts: int = 5) -> None:
+    """Stream one S3 object to *local*, retrying on transient connection failures.
+
+    SeaweedFS is a single-process all-in-one server (master + volume + filer +
+    S3). When its cgroup memory limit is breached the kernel kills the whole
+    process and `restart: unless-stopped` brings it back after a few seconds.
+    A bare ``open_input_stream`` call during that window raises an OSError
+    ("Could not connect to server") with no retry, failing the entire Spark
+    task. Exponential backoff here gives the container time to come back without
+    requiring an operator to manually re-trigger the DAG run.
+
+    Cap at 15 s so the total worst-case delay across five attempts is
+    1 + 2 + 4 + 8 + 15 = 30 s — negligible against a multi-minute Spark job.
+    """
+    for attempt in range(attempts):
+        try:
+            with s3.open_input_stream(path) as src, local.open("wb") as out:
+                shutil.copyfileobj(src, out)
+            return
+        except OSError as exc:
+            if attempt == attempts - 1:
+                raise
+            delay = min(2**attempt, 15)
+            log.warning(
+                "S3 download attempt %d/%d failed for %s (%s). Retrying in %ds.",
+                attempt + 1,
+                attempts,
+                path,
+                exc,
+                delay,
+            )
+            time.sleep(delay)
 
 
 def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
@@ -52,8 +90,7 @@ def _download(settings: Settings, bucket: str, prefix: str, dest: Path) -> int:
             continue
         safe_name = info.path.replace("/", "_")
         local = dest / f"{n:05d}_{safe_name}"
-        with s3.open_input_stream(info.path) as src, local.open("wb") as out:
-            shutil.copyfileobj(src, out)
+        _copy_file_with_retry(s3, info.path, local)
         n += 1
     return n
 
@@ -76,24 +113,21 @@ def build_session(driver_memory: str, shuffle_partitions: int):
 
     return (
         SparkSession.builder.appName("settlement-raw-to-staged")
-        # local[2] instead of local[*]: all executor threads share the single
-        # driver JVM inside the 1.8 GB scheduler container. With 4 vCPUs the
-        # peak RSS of concurrent window-function shuffles exceeds the limit.
-        # Two threads halve in-flight memory at a modest throughput cost, which
-        # keeps the local pipeline within its 6 GB memory envelope.
+        # local[2] instead of local[*]: bounds executor concurrency so memory
+        # remains predictable and avoids executor shuffle spikes.
         .master("local[2]")
         .config("spark.driver.memory", driver_memory)
-        # The default of 200 shuffle partitions on a laptop produces 200 tiny
-        # files and spends more time on task overhead than on the actual work.
         .config("spark.sql.shuffle.partitions", str(shuffle_partitions))
         .config("spark.sql.adaptive.enabled", "true")
+        .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+        .config("spark.sql.adaptive.advisoryPartitionSizeInBytes", "33554432")
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
         .config("spark.driver.host", "127.0.0.1")
-        # Reduce the fraction of heap Spark reserves for execution/storage so
-        # JVM metaspace + Python overhead fits within the container budget.
-        .config("spark.memory.fraction", "0.6")
-        .config("spark.memory.storageFraction", "0.3")
+        .config("spark.driver.maxResultSize", "512m")
+        .config("spark.cleaner.periodicGC.interval", "1min")
+        .config("spark.memory.fraction", "0.7")
+        .config("spark.memory.storageFraction", "0.2")
         .getOrCreate()
     )
 
@@ -232,7 +266,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--driver-memory", default=os.getenv("SPARK_DRIVER_MEMORY", "1g"))
     ap.add_argument(
-        "--shuffle-partitions", type=int, default=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "8"))
+        "--shuffle-partitions", type=int, default=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "16"))
     )
     args = ap.parse_args()
 

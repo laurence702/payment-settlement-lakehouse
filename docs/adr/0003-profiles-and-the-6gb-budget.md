@@ -53,3 +53,66 @@ and the `.env` comments say so at the point of change.
   mapped ports are configured to avoid standard collisions (e.g. ClickHouse native port
   remapped to 9100).
 * `make mem` prints live usage against the budget, so drift is visible.
+
+## Update 2026-11-15: analyst console
+
+The `ops` profile adds one container, the analyst console (`MEM_OPS=128m`).
+It shares the existing Postgres server, so it adds no database process. To keep
+the total unchanged, two ceilings were lowered by 64 MB each:
+
+    redis         96 MB -> 32 MB    observed peak 5 MiB
+    api-server   512 MB -> 448 MB   observed peak 278 MiB
+
+The 128 MB ceiling for the console is an estimate for one uvicorn worker and a
+small psycopg2 pool, not a measurement. `make mem` after a `make verify` run
+is where it gets confirmed or corrected. If it needs more, the donor is chosen
+from a measured peak, not guessed, and this section is updated in the same
+commit.
+
+## Update 2026-11-16: measured corrections, the v2 merge, and the large profile
+
+Measurement during `make verify` showed the 2026-11-15 section above was too
+tight in one place. Redis peaked at 20 MiB against its 32 MB ceiling, not at
+5 MiB. The merge with the v2 scale work reconciled the ceilings once, in
+`.env.example` and `config/profiles/small.env`:
+
+    redis        32 MB -> 48 MB     measured 20 MiB of 32 MB
+    clickhouse  1536 MB -> 1280 MB  v2 removed the query-log tables and set
+                                    max_server_memory_usage=0; measured peak
+                                    about 1 GiB
+    seaweedfs    768 MB -> 1024 MB  v2 finding: weed was OOM-killed at 768 MB;
+                                    GOMEMLIMIT now sits 256 MiB under the cap
+                                    and is configurable as S3_GOMEMLIMIT
+    dag-processor 400 MB -> 384 MB  offsets the redis increase
+
+The summed ceilings are 6200 MB, the same as `main` before the console. They
+exceed a 6 GB VM's usable memory on purpose: services do not peak together, and
+a hard sum under the VM size would leave the heaviest stages starved. Preflight
+now prints the sum next to the VM's real memory and warns when it is larger.
+
+### Profiles
+
+`config/profiles/small.env` is the 6 GB design target and the default.
+`medium.env` (8 GB VM) raises only the scheduler container and Spark's driver,
+the one service that hit its ceiling at 500k to 1M events. `large.env` (10 GB VM)
+raises them further. 10 GB is the hard upper limit this project allows itself;
+medium is tried first and large only if medium fails on memory. Apply
+one with `make profile PROFILE=small|medium|large`; only the keys a profile lists are
+rewritten, so generated secrets are never touched. These profiles exist
+because at that scale the container ceilings, not the pipeline, decide whether
+a run finishes. It is not a claim about any measured result: figures belong in
+`docs/benchmarks.md` and come from `make benchmark` summaries only.
+
+### Measured peaks at 1M events (2026-11-16)
+
+On the `medium` profile, one run of 999,947 events (docs/benchmarks.md) peaked
+at 4,094 MiB across all containers. Per container: scheduler 2,430 of 3,328,
+clickhouse 794 of 2,048, kafka 562 of 768, seaweedfs 561 of 1,024, api-server
+302 of 448, dag-processor 216 of 384, postgres 107 of 320, console 54 of 128,
+redis 8 of 48. Two consequences:
+
+* The 6 GB profile's 1,800 MiB scheduler ceiling is below what 1M events need
+  (2,430 MiB), which is why 1M fails there.
+* ClickHouse's measured 39% is a lower bound, because the load lasts about 3 s
+  and the sampler runs every 5 s. No ceiling is changed on this evidence; a
+  trim needs three repeat runs first.

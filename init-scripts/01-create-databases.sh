@@ -7,7 +7,10 @@ set -euo pipefail
 #             second postgres container saves ~380 MB, which matters at 6 GB.
 # metastore - reserved for a future Iceberg/Hive-style catalog.
 # analytics - scratch space for ad-hoc SQL that should not live in a mart.
-for db in airflow metastore analytics; do
+# settlement_ops - exception cases and the analyst audit trail. The ops
+#             migration runner also creates it when absent, so an existing
+#             volume does not need wiping. See docs/adr/0007.
+for db in airflow metastore analytics settlement_ops; do
   echo "creating database if absent: ${db}"
   if ! psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
         -tAc "SELECT 1 FROM pg_database WHERE datname = '${db}'" | grep -q 1; then
