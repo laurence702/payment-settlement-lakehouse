@@ -53,7 +53,8 @@ pipeline run can overwrite a decision.
 application. Instead an Airflow task reads the current breaks from ClickHouse
 and upserts them into `ops.cases`. The console then reads one database. Breaks
 number in the thousands, not millions, so the copy is cheap. A case that
-disappears from the latest run is marked `DISAPPEARED`, not deleted.
+is no longer a break in the latest run is marked `CLEARED`, not deleted, and
+any analyst decision on it is kept.
 
 **Closed does not mean frozen.** Each action stores a fingerprint of the facts
 it was decided against (break type and outstanding kobo). If a later run
