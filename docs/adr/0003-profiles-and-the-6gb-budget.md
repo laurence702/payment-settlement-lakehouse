@@ -93,10 +93,12 @@ now prints the sum next to the VM's real memory and warns when it is larger.
 ### Profiles
 
 `config/profiles/small.env` is the 6 GB design target and the default.
-`config/profiles/large.env` raises the ceilings and Spark's driver heap for
-Docker VMs of 16 GB and up, where 500k to 1M event runs are the point. Apply
-one with `make profile PROFILE=small|large`; only the keys a profile lists are
-rewritten, so generated secrets are never touched. The large profile exists
+`medium.env` (8 GB VM) raises only the scheduler container and Spark's driver,
+the one service that hit its ceiling at 500k to 1M events. `large.env` (10 GB VM)
+raises them further. 10 GB is the hard upper limit this project allows itself;
+medium is tried first and large only if medium fails on memory. Apply
+one with `make profile PROFILE=small|medium|large`; only the keys a profile lists are
+rewritten, so generated secrets are never touched. These profiles exist
 because at that scale the container ceilings, not the pipeline, decide whether
 a run finishes. It is not a claim about any measured result: figures belong in
 `docs/benchmarks.md` and come from `make benchmark` summaries only.

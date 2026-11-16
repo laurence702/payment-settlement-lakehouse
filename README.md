@@ -231,8 +231,8 @@ The 6 GB profile is the default. To measure how far the pipeline goes with more
 room, switch profile and let the runner repeat full runs from empty volumes:
 
 ```bash
-make profile PROFILE=large          # needs a Docker VM of 16 GB or more
-make benchmark EVENTS="500000 1000000" RUNS=3 PROFILE=large
+make profile PROFILE=medium         # an 8 GB Docker VM; PROFILE=large is the 10 GB ceiling
+make benchmark EVENTS="500000 1000000" RUNS=3 PROFILE=medium
 ```
 
 Each run records task durations, every container's peak memory, OOM kills,

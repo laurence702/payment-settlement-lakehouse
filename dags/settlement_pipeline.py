@@ -22,8 +22,15 @@ from settlement.config import VOLUME_PRESETS
 
 DEFAULT_ARGS = {
     "owner": "data-platform",
-    "retries": 1,
-    "retry_delay": pendulum.duration(minutes=2),
+    # Three retries with exponential backoff (1, 2, 4 minutes, capped at 8) give
+    # a transient fault, such as ClickHouse finishing a background merge or
+    # Spark's driver losing a race for memory, time to clear. A failure that
+    # repeats identically four times is not transient and should page a human.
+    # Only tasks that are safe to re-run inherit this; see generate_events.
+    "retries": 3,
+    "retry_delay": pendulum.duration(minutes=1),
+    "retry_exponential_backoff": True,
+    "max_retry_delay": pendulum.duration(minutes=8),
     # Fail fast rather than occupying the single LocalExecutor slot for an hour
     # because a broker went away.
     "execution_timeout": pendulum.duration(minutes=25),
@@ -83,7 +90,9 @@ def settlement_pipeline():
             )
         return {name: f"{h}:{p}" for name, (h, p) in targets.items()}
 
-    @task
+    # A retry would publish the whole event set to Kafka a second time, so this
+    # task never retries; rerun the DAG run instead.
+    @task(retries=0)
     def generate_events(**context) -> dict:
         """Publish synthetic transaction and settlement events to Kafka in bounded chunks."""
         from settlement.config import get_settings
