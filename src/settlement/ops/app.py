@@ -142,8 +142,17 @@ def create_app(store: CaseStore) -> FastAPI:
             },
         )
 
-    @app.get("/cases/{case_id}", response_class=HTMLResponse)
-    def case_page(request: Request, case_id: str, s: Store) -> HTMLResponse:
+    def render_case(
+        request: Request,
+        s: CaseStore,
+        case_id: str,
+        *,
+        status_code: int = 200,
+        error: str | None = None,
+        analyst: str = "",
+        notes: str = "",
+        selected: str = "",
+    ) -> HTMLResponse:
         case = s.get_case(_valid_case_id(case_id))
         if case is None:
             raise HTTPException(status_code=404, detail="case not found")
@@ -153,23 +162,50 @@ def create_app(store: CaseStore) -> FastAPI:
             {
                 "case": case,
                 "actions": s.list_actions(case_id),
-                "allowed": sorted(a.value for a in allowed_actions(case.analyst_status)),
+                # Declared order, so the safest action is the default.
+                "allowed": [a.value for a in Action if a in allowed_actions(case.analyst_status)],
                 # A fresh key per render: a double submit or a browser retry of
                 # this form replays instead of recording the action twice.
                 "idempotency_key": uuid.uuid4().hex,
+                "error": error,
+                "analyst": analyst,
+                "notes": notes,
+                "selected": selected,
             },
+            status_code=status_code,
         )
 
-    @app.post("/cases/{case_id}/actions")
+    @app.get("/cases/{case_id}", response_class=HTMLResponse)
+    def case_page(request: Request, case_id: str, s: Store) -> HTMLResponse:
+        return render_case(request, s, case_id)
+
+    @app.post("/cases/{case_id}/actions", response_model=None)
     def submit_action(
+        request: Request,
         case_id: str,
         s: Store,
         action: Annotated[Action, Form()],
         analyst: Annotated[str, Form(min_length=1, max_length=64)],
         idempotency_key: Annotated[str, Form()],
         notes: Annotated[str, Form(max_length=2000)] = "",
-    ) -> RedirectResponse:
-        _apply(s, _valid_case_id(case_id), action, analyst, notes, _valid_key(idempotency_key))
+    ) -> Response:
+        try:
+            _apply(s, _valid_case_id(case_id), action, analyst, notes, _valid_key(idempotency_key))
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                raise
+            # Show the problem on the form the analyst is looking at, keeping
+            # what they typed, instead of a bare JSON error page.
+            return render_case(
+                request,
+                s,
+                case_id,
+                status_code=exc.status_code,
+                error=str(exc.detail),
+                analyst=analyst,
+                notes=notes,
+                selected=action.value,
+            )
         # 303 so a browser refresh of the result page does not resubmit.
         return RedirectResponse(f"/cases/{case_id}", status_code=303)
 

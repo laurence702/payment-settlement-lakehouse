@@ -76,6 +76,43 @@ def test_form_post_records_the_action_and_redirects(client):
     assert "bank confirmed" in page and "CLOSED" in page
 
 
+def test_the_safest_action_is_the_default_choice(client):
+    html = client.get(f"/cases/{brk(1).case_id}").text
+    options = [line for line in html.splitlines() if line.strip().startswith("<option")]
+    assert 'value="START_REVIEW"' in options[0]
+
+
+def test_a_rejected_form_explains_itself_and_keeps_the_input(client, store):
+    case = brk(1)
+    r = client.post(
+        f"/cases/{case.case_id}/actions",
+        data={
+            "action": "CLOSE",
+            "analyst": "ada",
+            "notes": "   ",
+            "idempotency_key": "form-key-0009",
+        },
+    )
+    assert r.status_code == 422
+    assert "CLOSE requires a note" in r.text
+    assert 'value="ada"' in r.text
+    assert '<option value="CLOSE" selected>' in r.text
+    assert store.list_actions(case.case_id) == []
+
+
+def test_a_form_for_a_missing_case_is_404(client):
+    r = client.post(
+        f"/cases/{'0' * 64}/actions",
+        data={
+            "action": "CLOSE",
+            "analyst": "ada",
+            "notes": "x",
+            "idempotency_key": "form-key-0010",
+        },
+    )
+    assert r.status_code == 404
+
+
 def test_a_double_submitted_form_records_once(client, store):
     case = brk(1)
     data = {

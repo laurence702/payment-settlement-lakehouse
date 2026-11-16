@@ -6,11 +6,13 @@
   <span class="chip {{ case.effective_status }}">{{ case.effective_status | replace('_', ' ') }}</span>
 </h1>
 
+{% if error %}<div class="banner" role="alert">{{ error }}</div>{% endif %}
+
 {% if case.drifted %}
 <div class="banner">
   This decision was made when the case was <code>{{ case.decided_fingerprint }}</code>.
-  The latest pipeline run reports <code>{{ case.system_fingerprint }}</code>. Review it and
-  close it again or reopen it.
+  The latest pipeline run reports <code>{{ case.system_fingerprint }}</code>. Reopen the
+  case to review it against the new facts.
 </div>
 {% endif %}
 
@@ -38,12 +40,12 @@
   <input type="hidden" name="idempotency_key" value="{{ idempotency_key }}">
   <div><label for="action">Action</label>
     <select id="action" name="action" required>
-      {% for a in allowed %}<option value="{{ a }}">{{ a | replace('_', ' ') | lower }}</option>{% endfor %}
+      {% for a in allowed %}<option value="{{ a }}"{% if a == selected %} selected{% endif %}>{{ a | replace('_', ' ') | lower }}</option>{% endfor %}
     </select></div>
   <div><label for="analyst">Your name</label>
-    <input id="analyst" name="analyst" maxlength="64" required></div>
+    <input id="analyst" name="analyst" maxlength="64" value="{{ analyst }}" required></div>
   <div><label for="notes">Note (required to escalate, close or reopen)</label>
-    <textarea id="notes" name="notes" rows="3" maxlength="2000"></textarea></div>
+    <textarea id="notes" name="notes" rows="3" maxlength="2000">{{ notes }}</textarea></div>
   <div><button type="submit">Record action</button></div>
 </form>
 {% else %}
