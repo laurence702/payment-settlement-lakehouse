@@ -13,7 +13,7 @@ CREATE TABLE ops.cases (
     merchant_id           text        NOT NULL,
     channel               text        NOT NULL,
     gateway               text        NOT NULL,
-    bank_code             text        NOT NULL,
+    bank_code             text,  -- null for card payments, which have no bank leg
     currency              text        NOT NULL,
     succeeded_date        date        NOT NULL,
     amount_ngn_kobo       bigint      NOT NULL CHECK (amount_ngn_kobo >= 0),

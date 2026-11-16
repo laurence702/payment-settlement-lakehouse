@@ -44,6 +44,16 @@ set -a; . ./.env; set +a
 SAMPLER=$!
 trap 'kill $SAMPLER 2>/dev/null' EXIT
 
+# 0. Start from empty volumes. A done-check that inherits Kafka topics, object
+#    store contents or ClickHouse tables from earlier runs can fail (or pass) on
+#    data that has nothing to do with the code under test: on 2026-11-16 leftover
+#    events from earlier runs produced 650 negative settlement lags that a clean
+#    run does not. VERIFY_KEEP_DATA=1 skips this when you want to inspect state.
+if [ "${VERIFY_KEEP_DATA:-0}" != 1 ]; then
+  COMPOSE_PROFILES=core,stream,warehouse,airflow,ops \
+    docker compose --env-file .env down --volumes --remove-orphans > "$REPORT/reset.log" 2>&1 || true
+fi
+
 # 1. the end-to-end run
 if ./scripts/demo.sh > "$REPORT/demo.log" 2>&1; then
   pass "demo.sh completed (DAG run succeeded)"

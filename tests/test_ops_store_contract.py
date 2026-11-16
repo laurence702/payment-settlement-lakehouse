@@ -12,6 +12,7 @@ import hashlib
 import os
 import threading
 import uuid
+from dataclasses import replace
 from datetime import date
 
 import pytest
@@ -132,6 +133,12 @@ def test_sync_opens_cases_and_is_idempotent(store):
     assert total == 2
     assert {c.effective_status for c in cases} == {"OPEN"}
     assert all(c.display_id.startswith("CASE-") and len(c.display_id) == 21 for c in cases)
+
+
+def test_card_payments_have_no_bank_code(store):
+    card = replace(brk(1), channel="card", bank_code=None)
+    store.sync_breaks(iter([card]))
+    assert store.get_case(card.case_id).bank_code is None
 
 
 def test_a_case_that_stops_being_a_break_is_cleared_not_deleted(store):

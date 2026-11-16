@@ -17,7 +17,7 @@ class BreakRow:
     merchant_id: str
     channel: str
     gateway: str
-    bank_code: str
+    bank_code: str | None
     currency: str
     succeeded_date: date
     amount_ngn_kobo: int
@@ -35,7 +35,7 @@ class CaseView:
     merchant_id: str
     channel: str
     gateway: str
-    bank_code: str
+    bank_code: str | None
     currency: str
     succeeded_date: date
     amount_ngn_kobo: int

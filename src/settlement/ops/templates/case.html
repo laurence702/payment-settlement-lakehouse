@@ -25,7 +25,7 @@
   <dt>Charged (NGN)</dt><dd>{{ case.amount_ngn_kobo | ngn }}</dd>
   <dt>Expected net (NGN)</dt><dd>{{ case.expected_net_kobo | ngn }}</dd>
   <dt>Settled net (NGN)</dt><dd>{{ case.settled_net_kobo | ngn if case.settled_net_kobo is not none else "none received" }}</dd>
-  <dt>Channel / gateway / bank</dt><dd>{{ case.channel }} / {{ case.gateway }} / {{ case.bank_code }}</dd>
+  <dt>Channel / gateway / bank</dt><dd>{{ case.channel }} / {{ case.gateway }} / {{ case.bank_code or 'no bank leg' }}</dd>
   <dt>Succeeded</dt><dd>{{ case.succeeded_date }}</dd>
   <dt>Pipeline status</dt><dd>{{ case.system_status.value }}</dd>
   <dt>First / last seen</dt><dd>{{ case.first_seen_at.strftime("%Y-%m-%d %H:%M") }} / {{ case.last_seen_at.strftime("%Y-%m-%d %H:%M") }} UTC</dd>
