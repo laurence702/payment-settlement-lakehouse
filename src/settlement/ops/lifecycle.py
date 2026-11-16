@@ -108,6 +108,11 @@ def effective_status(system: SystemStatus, analyst: AnalystStatus | None) -> str
     return (analyst or system).value
 
 
+def display_id(case_id: str) -> str:
+    """Human-facing label. Never a key: sixteen hex characters is 64 bits."""
+    return f"CASE-{case_id[:16].upper()}"
+
+
 def fingerprint(break_type: str, exposure_kobo: int) -> str:
     """The facts a decision is made against. Readable on purpose."""
     return f"{break_type}:{exposure_kobo}"
