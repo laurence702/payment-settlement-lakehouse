@@ -75,8 +75,9 @@ formatting uses integer division and modulo.
 
 ## Consequences
 
-* The mart gains three additive columns: `case_id`, `is_break`, `break_type`.
-  No existing column changes.
+* The mart gains four additive columns: `case_id`, `is_break`, `break_type` and
+  `exposure_kobo` (money at risk, integer kobo, used to sort the queue). No
+  existing column changes.
 * The console is an optional compose profile (`ops`). Its memory comes out of
   the existing budget, and the change is recorded in ADR 0003 and
   `.env.example` in the same commit.

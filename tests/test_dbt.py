@@ -111,6 +111,27 @@ def test_reconciliation_grain_and_buckets(dbt_run):
     )
 
 
+def test_breaks_carry_a_stable_case_identity(dbt_run):
+    duckdb = pytest.importorskip("duckdb")
+    marts, _ = dbt_run
+    con = duckdb.connect()
+    p = f"{marts}/mart_settlement_reconciliation.parquet"
+
+    breaks, with_exposure = con.execute(
+        f"select count(*), count(*) filter (where exposure_kobo > 0) "
+        f"from '{p}' where is_break"
+    ).fetchone()
+    assert breaks > 0, "no breaks in the synthetic data; the ops queue would be empty"
+    assert with_exposure == breaks
+
+    ref, case_id = con.execute(
+        f"select transaction_ref, case_id from '{p}' order by transaction_ref limit 1"
+    ).fetchone()
+    expected = con.execute("select sha256('case:v1:' || ?)", [ref]).fetchone()[0]
+    assert case_id == expected
+    assert len(case_id) == 64 and case_id == case_id.lower()
+
+
 def test_amount_matched_rows_carry_no_outstanding_balance(dbt_run):
     duckdb = pytest.importorskip("duckdb")
     marts, _ = dbt_run

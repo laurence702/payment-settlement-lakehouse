@@ -42,6 +42,24 @@ models:
         data_tests: [not_null]
       - name: outstanding_net_kobo
         data_tests: [not_null]
+      - name: case_id
+        description: >
+          SHA-256 of 'case:v1:' plus transaction_ref. The only place case identity
+          is produced. See docs/adr/0007.
+        data_tests:
+          - unique
+          - not_null
+      - name: is_break
+        data_tests: [not_null]
+      - name: break_type
+        description: Equals reconciliation_status for breaks, null otherwise.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['missing_settlement', 'partial_settlement', 'short_paid', 'overpaid', 'reversed_after_settlement']
+      - name: exposure_kobo
+        description: Money at risk for a break, in integer kobo. Zero when not a break.
+        data_tests: [not_null]
 
   - name: mart_merchant_daily
     description: One row per merchant per day.

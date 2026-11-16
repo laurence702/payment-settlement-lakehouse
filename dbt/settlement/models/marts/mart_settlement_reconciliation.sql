@@ -59,69 +59,99 @@ joined as (
     left join {{ ref('stg_settlements') }} s
         on e.transaction_ref = s.transaction_ref
 
+),
+
+classified as (
+
+    select
+        transaction_ref,
+        merchant_id,
+        channel,
+        gateway,
+        bank_code,
+        currency,
+        amount_ngn_kobo,
+        fee_ngn_kobo,
+        succeeded_at,
+        succeeded_date,
+        expected_settlement_date,
+        settlement_source_watermark_at,
+        settlement_id,
+        payout_id,
+        settlement_date,
+        settled_at,
+        settled_net_kobo,
+        as_of_date,
+        days_since_success,
+
+        settlement_id is not null as is_settled,
+        settlement_id is not null
+            and settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo as is_amount_matched,
+        amount_ngn_kobo - fee_ngn_kobo as expected_net_kobo,
+        case
+            when settlement_id is null then null
+            else settled_net_kobo - (amount_ngn_kobo - fee_ngn_kobo)
+        end as settlement_variance_kobo,
+
+        case
+            when settlement_source_watermark_at::date >= expected_settlement_date then 'fresh'
+            else 'stale_or_incomplete'
+        end as source_freshness_status,
+
+        case
+            when status = 'reversed' and settlement_id is not null
+                then 'reversed_after_settlement'
+            when settlement_id is null
+                 and settlement_source_watermark_at::date < expected_settlement_date
+                then 'unverified_source'
+            when settlement_id is null then 'missing_settlement'
+            when settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo then 'matched'
+            when settled_net_kobo < (amount_ngn_kobo - fee_ngn_kobo) * 9 / 10 then 'partial_settlement'
+            when settled_net_kobo < amount_ngn_kobo - fee_ngn_kobo then 'short_paid'
+            else 'overpaid'
+        end as reconciliation_status,
+
+        case
+            when settlement_id is not null then 'settled'
+            when settlement_source_watermark_at::date < expected_settlement_date then 'pending_within_sla'
+            when days_since_success <= 1 then 'pending_t1'
+            when days_since_success = 2  then 'pending_t2'
+            when as_of_date <= expected_settlement_date then 'pending_within_sla'
+            else 'breached_sla'
+        end as reconciliation_bucket,
+
+        case
+            when settlement_id is null then amount_ngn_kobo - fee_ngn_kobo
+            when status = 'reversed' and settlement_id is not null then 0
+            else greatest(0, amount_ngn_kobo - fee_ngn_kobo - settled_net_kobo)
+        end as outstanding_net_kobo
+
+    from joined
+
+),
+
+flagged as (
+
+    select
+        *,
+        reconciliation_status in (
+            'short_paid', 'partial_settlement', 'overpaid', 'reversed_after_settlement'
+        )
+        or (reconciliation_status = 'missing_settlement' and reconciliation_bucket = 'breached_sla')
+            as is_break
+    from classified
+
 )
 
+-- Case identity is produced here and nowhere else. See docs/adr/0007.
 select
-    transaction_ref,
-    merchant_id,
-    channel,
-    gateway,
-    bank_code,
-    currency,
-    amount_ngn_kobo,
-    fee_ngn_kobo,
-    succeeded_at,
-    succeeded_date,
-    expected_settlement_date,
-    settlement_source_watermark_at,
-    settlement_id,
-    payout_id,
-    settlement_date,
-    settled_at,
-    settled_net_kobo,
-    as_of_date,
-    days_since_success,
-
-    settlement_id is not null as is_settled,
-    settlement_id is not null
-        and settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo as is_amount_matched,
-    amount_ngn_kobo - fee_ngn_kobo as expected_net_kobo,
+    *,
+    sha256('case:v1:' || transaction_ref) as case_id,
+    case when is_break then reconciliation_status end as break_type,
     case
-        when settlement_id is null then null
-        else settled_net_kobo - (amount_ngn_kobo - fee_ngn_kobo)
-    end as settlement_variance_kobo,
-
-    case
-        when settlement_source_watermark_at::date >= expected_settlement_date then 'fresh'
-        else 'stale_or_incomplete'
-    end as source_freshness_status,
-
-    case
-        when status = 'reversed' and settlement_id is not null
-            then 'reversed_after_settlement'
-        when settlement_id is null
-             and settlement_source_watermark_at::date < expected_settlement_date
-            then 'unverified_source'
-        when settlement_id is null then 'missing_settlement'
-        when settled_net_kobo = amount_ngn_kobo - fee_ngn_kobo then 'matched'
-        when settled_net_kobo < (amount_ngn_kobo - fee_ngn_kobo) * 9 / 10 then 'partial_settlement'
-        when settled_net_kobo < amount_ngn_kobo - fee_ngn_kobo then 'short_paid'
-        else 'overpaid'
-    end as reconciliation_status,
-
-    case
-        when settlement_id is not null then 'settled'
-        when settlement_source_watermark_at::date < expected_settlement_date then 'pending_within_sla'
-        when days_since_success <= 1 then 'pending_t1'
-        when days_since_success = 2  then 'pending_t2'
-        when as_of_date <= expected_settlement_date then 'pending_within_sla'
-        else 'breached_sla'
-    end as reconciliation_bucket,
-
-    case
-        when settlement_id is null then amount_ngn_kobo - fee_ngn_kobo
-        when status = 'reversed' and settlement_id is not null then 0
-        else greatest(0, amount_ngn_kobo - fee_ngn_kobo - settled_net_kobo)
-    end as outstanding_net_kobo
-
-from joined
+        when not is_break then 0
+        when settlement_id is null then expected_net_kobo
+        when reconciliation_status = 'reversed_after_settlement' then settled_net_kobo
+        else abs(settlement_variance_kobo)
+    end as exposure_kobo
+from flagged
