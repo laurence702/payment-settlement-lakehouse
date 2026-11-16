@@ -31,9 +31,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "src"))
 
 from e2e.airflow import AirflowClient, AirflowError  # noqa: E402
 from e2e.stack import Stack, read_env  # noqa: E402
+from settlement.config import VOLUME_PRESETS  # noqa: E402
 
 _UNITS = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "kB": 1000, "MB": 1000**2}
 _MEM = re.compile(r"^([\d.]+)\s*([A-Za-z]+)")
@@ -58,17 +60,28 @@ class MemorySampler:
 
     interval_s: float = 5.0
     peaks_mib: dict[str, float] = field(default_factory=dict)
+    timeline: list[dict] = field(default_factory=list)
     _stop: threading.Event = field(default_factory=threading.Event)
     _thread: threading.Thread | None = None
 
     def _loop(self) -> None:
         while not self._stop.is_set():
             out = _sh("docker", "stats", "--no-stream", "--format", "{{.Name}}|{{.MemUsage}}")
+            sample: dict[str, float] = {}
             for line in out.splitlines():
                 name, _, usage = line.partition("|")
                 if name.startswith("np_"):
                     used = _to_mib(usage.split("/")[0])
+                    sample[name] = round(used, 1)
                     self.peaks_mib[name] = max(self.peaks_mib.get(name, 0.0), used)
+            if sample:
+                self.timeline.append(
+                    {
+                        "t": datetime.now(UTC).strftime("%H:%M:%S"),
+                        "total_mib": round(sum(sample.values()), 1),
+                        **sample,
+                    }
+                )
             self._stop.wait(self.interval_s)
 
     def start(self) -> None:
@@ -114,7 +127,24 @@ def vm_info() -> dict:
     return {"memory_gib": round(int(mem) / 1024**3, 2), "cpus": int(cpus)}
 
 
+def wait_for_external_run(client: AirflowClient, timeout_s: float) -> tuple[str, int]:
+    """Block until a run is started elsewhere (e.g. the Airflow UI); return its id and size."""
+    known = (client.newest_run() or {}).get("dag_run_id")
+    deadline = time.monotonic() + timeout_s
+    print("waiting for a DAG run to be triggered in Airflow ...", flush=True)
+    while time.monotonic() < deadline:
+        run = client.newest_run()
+        if run and run["dag_run_id"] != known and run["state"] in ("queued", "running"):
+            conf = run.get("conf") or {}
+            events = int(conf.get("event_count") or VOLUME_PRESETS.get(conf.get("preset", ""), 0))
+            print(f"observing {run['dag_run_id']} ({events:,} events)", flush=True)
+            return run["dag_run_id"], events
+        time.sleep(5)
+    raise AirflowError("no DAG run was triggered before the timeout")
+
+
 def run_once(args, env: dict[str, str], stack: Stack, events: int, index: int, out: Path) -> dict:
+    attach = args.attach
     run_id = f"bench_{events}_{index}_{datetime.now(UTC):%Y%m%dT%H%M%S}"
     record: dict = {
         "run_id": run_id,
@@ -125,7 +155,7 @@ def run_once(args, env: dict[str, str], stack: Stack, events: int, index: int, o
         "limits": {k: v for k, v in env.items() if k.startswith(("MEM_", "SPARK_", "S3_GO"))},
     }
 
-    if not args.no_reset:
+    if not args.no_reset and not attach:
         reset = subprocess.run(
             ["./scripts/stack-fresh.sh"], cwd=ROOT, capture_output=True, text=True
         )
@@ -139,13 +169,20 @@ def run_once(args, env: dict[str, str], stack: Stack, events: int, index: int, o
     sampler.start()
     began = time.monotonic()
     try:
-        client.trigger(run_id, {"event_count": events, "consumer_group_suffix": run_id[-24:]})
+        if attach:
+            run_id, events = wait_for_external_run(client, args.timeout_s)
+            record.update(run_id=run_id, events=events, mode="attached")
+        else:
+            client.trigger(run_id, {"event_count": events, "consumer_group_suffix": run_id[-24:]})
+        began = time.monotonic()
         state = client.wait_for_run(run_id, timeout_s=args.timeout_s, poll_s=5)
     except AirflowError as exc:
         state = "timeout" if "still not finished" in str(exc) else "api_error"
         record["detail"] = str(exc)
     wall_s = time.monotonic() - began
     record["peak_memory_mib"] = sampler.stop()
+    record["memory_timeline"] = sampler.timeline
+    record["peak_total_mib"] = max((s["total_mib"] for s in sampler.timeline), default=None)
 
     try:
         tasks = client.tasks(run_id)
@@ -197,6 +234,9 @@ def summarise(records: list[dict], out: Path, args) -> str:
         lines.append(
             f"wall seconds: min {min(walls)}, median {statistics.median(walls)}, max {max(walls)}"
         )
+        totals = [r["peak_total_mib"] for r in ok if r.get("peak_total_mib")]
+        if totals:
+            lines.append(f"peak of all np_* containers together: {max(totals):.0f} MiB")
         task_ids = list(ok[0]["tasks"])
         lines += ["", "| task | median s | max s |", "|---|---|---|"]
         for t in task_ids:
@@ -221,6 +261,11 @@ def main() -> int:
     parser.add_argument("--runs", type=int, default=1, help="runs per event count")
     parser.add_argument("--profile", default="custom", help="label recorded with each run")
     parser.add_argument("--timeout-s", type=float, default=4 * 3600)
+    parser.add_argument(
+        "--attach",
+        action="store_true",
+        help="do not trigger or reset: wait for a run started elsewhere (e.g. UI) and measure it",
+    )
     parser.add_argument("--no-reset", action="store_true", help="skip the volume reset")
     args = parser.parse_args()
 
@@ -229,13 +274,17 @@ def main() -> int:
     out = ROOT / "benchmark-runs" / datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
     out.mkdir(parents=True)
     records: list[dict] = []
-    for events in args.events:
-        for index in range(1, args.runs + 1):
-            print(f"== {events:,} events, run {index}/{args.runs}", flush=True)
-            record = run_once(args, env, stack, events, index, out)
-            records.append(record)
-            print(f"   {record['outcome']} in {record.get('wall_seconds', '?')}s", flush=True)
-            summarise(records, out, args)
+    plan = (
+        [(args.events[0], 1)]
+        if args.attach
+        else [(e, i) for e in args.events for i in range(1, args.runs + 1)]
+    )
+    for events, index in plan:
+        print(f"== {events:,} events, run {index}/{args.runs}", flush=True)
+        record = run_once(args, env, stack, events, index, out)
+        records.append(record)
+        print(f"   {record['outcome']} in {record.get('wall_seconds', '?')}s", flush=True)
+        summarise(records, out, args)
     print(summarise(records, out, args))
     print(f"records: {out}")
     return 0 if all(r["outcome"] == "success" for r in records) else 1

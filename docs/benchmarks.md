@@ -15,6 +15,16 @@ unless stated, 2026-11-16. A single run is a data point, not a distribution.
 | 500,000 | 1 | succeeded | 293 s | 440,363 | `bench_500000_1_20261116T154404` |
 | 1,000,000 | 1 | **failed** in `spark_raw_to_staged` | 684 s | none | `bench_1000000_1_20261116T155012` |
 
+Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
+runner, so memory was not recorded: 1,000,000 events, run
+`manual__2026-11-16T22:43:32.962376+00:00`. `spark_raw_to_staged` and `dbt_build`
+passed. `load_clickhouse` failed twice with ClickHouse code 241 (its server
+limit, 1.13 GiB, was 90% of the 1,280 MB ceiling). After the ClickHouse ceiling
+was raised to 2,048 MB the task was cleared, succeeded, and the run finished
+`success`. Task times from the UI: generate 2:52, ingest 1:50, Spark 0:43,
+dbt 0:14, load 0:05, quality checks 0:01, ops sync 0:03. A clean, measured
+repeat is recorded below once run.
+
 Wall time is trigger to terminal state and excludes stack start-up. The 20k
 wall times were sampled at a coarser poll interval than the later runs.
 

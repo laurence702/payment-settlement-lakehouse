@@ -88,6 +88,12 @@ class AirflowClient:
     def run_state(self, run_id: str) -> str:
         return self._request("GET", f"/api/v2/dags/{DAG_ID}/dagRuns/{run_id}")["state"]
 
+    def newest_run(self) -> dict | None:
+        """The most recently started DAG run, or None if the DAG has never run."""
+        body = self._request("GET", f"/api/v2/dags/{DAG_ID}/dagRuns?order_by=-start_date&limit=1")
+        runs = body.get("dag_runs", [])
+        return runs[0] if runs else None
+
     def tasks(self, run_id: str) -> list[TaskRecord]:
         body = self._request("GET", f"/api/v2/dags/{DAG_ID}/dagRuns/{run_id}/taskInstances")
         return [

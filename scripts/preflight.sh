@@ -56,8 +56,15 @@ fi
 # Colima was told to allocate: the kernel reserves a slice first. --memory 6
 # shows up as ~5.8 GiB. Compare in MiB with headroom for that cut, and print a
 # decimal, because integer GiB arithmetic truncates 5.8 to 5 and then lies.
+# Kiri (and some other lightweight runtimes) may expose 0 for MemTotal via the
+# Docker API; fall back to /proc/meminfo inside the VM via a container, the
+# same technique used for disk below.
 mem_bytes=$(docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0)
 mem_mib=$(( mem_bytes / 1048576 ))
+if [ "$mem_mib" -eq 0 ]; then
+  mem_kb=$(docker run --rm --entrypoint sh alpine:3.20 -c "grep MemTotal /proc/meminfo | awk '{print \$2}'" 2>/dev/null || echo 0)
+  mem_mib=$(( mem_kb / 1024 ))
+fi
 mem_disp=$(awk "BEGIN{printf \"%.1f\", $mem_mib/1024}")
 if   [ "$mem_mib" -ge 7600 ]; then
   ok "VM memory ${mem_disp} GiB"

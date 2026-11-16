@@ -90,7 +90,7 @@ Docker VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
 | Missing settlement | 2,731 transactions |
 | Amount-mismatched rows | 3,054 rows |
 | Merchants / Customers / Days | 40 / 95,085 / 14 |
-| Automated tests (current suite) | **171** (unit, Spark, dbt, ops store, console) |
+| Automated tests (current suite) | **182** (unit, Spark, dbt, ops store, console) |
 
 ## Data and reconciliation flow
 
@@ -237,6 +237,10 @@ make benchmark EVENTS="500000 1000000" RUNS=3 PROFILE=medium
 
 Each run records task durations, every container's peak memory, OOM kills,
 restarts and the final mart row count. Failed runs are recorded, not retried.
+Use `--attach` (`python scripts/benchmark.py --attach`) to measure a run you
+start yourself from the Airflow UI. Tasks that are safe to repeat retry three
+times with exponential backoff ([ADR 0008](docs/adr/0008-retries-and-backoff.md));
+`make chaos-retry` stops ClickHouse mid-run to prove it recovers.
 Records and a `summary.md` land in `benchmark-runs/` (gitignored); see
 [docs/benchmarks.md](docs/benchmarks.md) for what has been measured so far.
 
