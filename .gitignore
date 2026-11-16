@@ -23,3 +23,9 @@ docs/assets/*prompt*
 
 # make verify evidence
 verify-report*/
+
+# local-only workflow files, never published
+*CENTRAL_MEMORY*.md
+docs/social/
+scratch/
+graphify-out/
