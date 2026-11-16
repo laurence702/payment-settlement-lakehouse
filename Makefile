@@ -48,6 +48,9 @@ bootstrap:  ## Create .env and write absolute paths / generated secrets into it
 verify-images:  ## Check every pinned image tag resolves
 	@./scripts/verify-images.sh
 
+profile:  ## Apply a resource profile to .env: make profile PROFILE=small|large (see config/profiles)
+	@./scripts/apply-profile.sh "$(PROFILE)"
+
 preflight:  ## Check this project's .env, then docker/memory/disk/ports/pins
 	@./scripts/check-env.sh
 	@echo

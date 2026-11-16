@@ -67,6 +67,20 @@ else
   bad "VM memory ${mem_disp} GiB is below the budget in docs/adr/0003. Allocate at least 6 GB memory to your Docker VM (e.g. colima start --cpu 4 --memory 6 --disk 60 or Docker Desktop Settings -> Resources)"
 fi
 
+# The configured container ceilings against what the VM really has. Ceilings that sum past
+# the VM's memory are legitimate (peaks do not coincide) but leave no margin. MEM_KAFKA_HEAP is a JVM flag, not a ceiling.
+ceil_mib=$(grep -E '^MEM_[A-Z0-9_]+=[0-9]+[mg]$' .env 2>/dev/null | awk -F= '
+  { v=$2; u=substr(v,length(v)); n=substr(v,1,length(v)-1)+0; s+= (u=="g") ? n*1024 : n }
+  END { printf "%d", s }')
+if [ "${ceil_mib:-0}" -gt 0 ] && [ "$mem_mib" -gt 0 ]; then
+  ceil_disp=$(awk "BEGIN{printf \"%.1f\", $ceil_mib/1024}")
+  if [ "$ceil_mib" -gt "$mem_mib" ]; then
+    warn "container ceilings in .env sum to ${ceil_disp} GiB, above the VM's ${mem_disp} GiB. Services rarely peak together (the 6 GB default is oversubscribed by design, docs/adr/0003), but a spike can reach the kernel OOM-killer. Use a larger VM with: make profile PROFILE=large"
+  else
+    ok "container ceilings ${ceil_disp} GiB fit the VM's ${mem_disp} GiB"
+  fi
+fi
+
 cpus=$(docker info --format '{{.NCPU}}' 2>/dev/null || echo 0)
 [ "$cpus" -ge 4 ] && ok "VM cpus ${cpus}" || warn "VM cpus ${cpus}; 4 recommended"
 
