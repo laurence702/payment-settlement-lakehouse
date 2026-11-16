@@ -118,8 +118,7 @@ def test_breaks_carry_a_stable_case_identity(dbt_run):
     p = f"{marts}/mart_settlement_reconciliation.parquet"
 
     breaks, with_exposure = con.execute(
-        f"select count(*), count(*) filter (where exposure_kobo > 0) "
-        f"from '{p}' where is_break"
+        f"select count(*), count(*) filter (where exposure_kobo > 0) from '{p}' where is_break"
     ).fetchone()
     assert breaks > 0, "no breaks in the synthetic data; the ops queue would be empty"
     assert with_exposure == breaks
