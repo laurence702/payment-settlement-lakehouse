@@ -49,6 +49,13 @@ flowchart LR
         CH --> QC["Quality checks\n(5 assertions)"]
     end
 
+    subgraph Ops["Operations layer"]
+        SY["Sync task\n(system columns only)"] --> PG["Postgres ops schema\n(cases + audit trail)"]
+        PG --> CON["Analyst console\n(triage · actions)"]
+    end
+
+    CH --> SY
+
     subgraph Store["Object store"]
         S3["SeaweedFS / S3\n(raw + staged Parquet)"]
     end
@@ -59,6 +66,7 @@ flowchart LR
     A["Airflow 3.3.1\n(orchestration)"] -. DAG: settlement_pipeline .-> Ingest
     A -. orchestrates .-> Transform
     A -. orchestrates .-> Serve
+    A -. orchestrates .-> Ops
 ```
 
 The local stack is Kafka, SeaweedFS-compatible object storage (S3-API), PySpark,
@@ -82,7 +90,7 @@ Docker VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
 | Missing settlement | 2,731 transactions |
 | Amount-mismatched rows | 3,054 rows |
 | Merchants / Customers / Days | 40 / 95,085 / 14 |
-| Automated tests | **52** (unit + Spark + dbt) |
+| Automated tests (current suite) | **171** (unit, Spark, dbt, ops store, console) |
 
 ## Data and reconciliation flow
 
@@ -119,6 +127,39 @@ synthetic settlement feed from being represented as a missing-settlement
 breach. A `payout_id` connects multiple settlement lines to a synthetic payout
 batch while preserving `transaction_ref` compatibility.
 
+## What happens to a break
+
+A reconciliation mart that stops at a table leaves the real question open: who
+owns the rows that need a human, and what stops the next pipeline run from
+undoing their work? The operations layer answers both. See
+[ADR 0007](docs/adr/0007-ops-case-management.md) for the decisions.
+
+- **A break is defined, not implied.** `short_paid`, `partial_settlement`,
+  `overpaid`, `reversed_after_settlement`, and `missing_settlement` past its SLA
+  are breaks. `matched`, `unverified_source`, and anything still within its SLA
+  are not, so a stale source never opens a case.
+- **Identity is deterministic and produced once.** dbt computes `case_id` as the
+  SHA-256 of the transaction reference, so a re-run yields the same id. Python
+  never recomputes it.
+- **Two writers, two sets of columns.** The pipeline sync writes only what the
+  pipeline knows (is it still a break, how much is at risk). Analyst actions
+  write only the decision. The status an analyst sees is derived from both, so
+  no pipeline run can overwrite a decision.
+- **The audit trail is append-only and idempotent.** Every action carries an
+  idempotency key; a retry replays instead of recording twice. A database
+  trigger, not application code, rejects edits and deletes to the trail.
+- **A decision on moved facts is flagged, not trusted.** If a closed case's break
+  type or exposure changes in a later run, the console marks it for review.
+- **`make verify` proves the guarantee.** It closes a break through the console,
+  runs the whole pipeline again from the same events, and fails unless the case
+  is still closed with exactly one audit row.
+
+The console is a small FastAPI app on its own slim image, in the optional `ops`
+compose profile, on `127.0.0.1` only. Case state lives in the stack's existing
+Postgres server in its own database; ClickHouse and DuckDB are not used for
+single-row mutable state. The 128 MB it needs is funded from the existing
+budget, not added to it (ADR 0003).
+
 ## Run locally
 
 Use Docker Desktop or Colima configured with 6 GB and Docker Compose v2.
@@ -136,7 +177,8 @@ make demo
 `make bootstrap` creates the local `.env` and generated development secrets.
 `make preflight` verifies Docker, memory, disk, ports, pins, and environment
 configuration. `make demo` starts the required services, triggers the Airflow
-DAG, and reports the reconciliation result.
+DAG, and reports the reconciliation result. When the run finishes, the analyst
+console is at `http://127.0.0.1:8090` (the port is `PORT_OPS` in `.env`).
 
 ## Test commands
 
@@ -146,10 +188,14 @@ make lint
 make test-fast
 make test-spark
 make test-dbt
+make test-ops
 make test
 make verify
 ```
 
+`make test-ops` starts a throwaway Postgres container and runs the ops store
+and console tests against it. The same contract tests run against an in-memory
+store, which is what keeps the fast suite honest.
 `make test` runs unit, Spark, and dbt tests without the Docker stack.
 `make verify` is the full Docker end-to-end verification; it requires enough
 local Docker capacity and validates the DAG, container health, and non-empty
@@ -167,7 +213,8 @@ reconciliation output.
 - dbt tests enforce key uniqueness, required fields, allowed reconciliation and
   freshness states, and basic source relationships.
 - Pytest covers generator pathologies, quarantine records, real Spark staging,
-  and dbt models built from staged Parquet (49 tests across 7 modules).
+  dbt models built from staged Parquet, the ops store contract and the console
+  (171 tests across 10 modules).
 
 ## Known limitations
 
@@ -185,6 +232,14 @@ reconciliation output.
 - Kafka uses one broker and replication factor one. Spark runs locally and
   stages object-store inputs through local files to stay within the memory
   envelope.
+- The analyst console has no authentication. It binds to loopback and takes an
+  analyst name per request, so the audit trail records what a user typed, not a
+  verified identity. Real use needs SSO and roles.
+- A case is one row per transaction. A transaction that breaks, is fixed, and
+  breaks again shows as one case with its history in the audit trail, not as
+  separate cases.
+- The queue pages with `LIMIT`/`OFFSET`, which is fine for thousands of breaks
+  and would move to keyset pagination before it met millions.
 
 ## v0.2 and roadmap
 
@@ -204,7 +259,8 @@ Implemented in v0.2:
 
 Benchmark (100k events, 6 GB VM):
 75-second end-to-end run · ₦1.6B total value · ₦51.3M synthetic outstanding
-exposure surfaced · 93.4% match rate · 52 automated tests.
+exposure surfaced · 93.4% match rate. The suite has since grown to 171
+automated tests.
 
 Later real-world requirements include signed provider webhooks and report/API
 ingestion, trusted completeness contracts and cutoffs, payout adjustments and
@@ -216,6 +272,7 @@ registry and replicas, plus production monitoring and deployment controls.
 ```text
 dags/                     Airflow orchestration
 src/settlement/             generator, schemas, ingest, Spark, serving, checks
+src/settlement/ops/         case lifecycle, Postgres store, sync, analyst console
 dbt/settlement/             staging models, facts, marts, and data tests
 docs/adr/                 architecture decisions
 scripts/                  bootstrap, preflight, demo, and verification helpers
