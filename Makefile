@@ -13,7 +13,7 @@ COMPOSE := docker compose --env-file .env
 ALL_PROFILES := core,stream,warehouse,airflow,ops
 
 .DEFAULT_GOAL := help
-.PHONY: help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
+.PHONY: e2e e2e-setup profile help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
         test test-fast test-spark test-dbt lint venv dag-trigger dag-logs \
         airflow-shell dbt-shell ch ops-up ops-down test-ops clean
 
@@ -68,6 +68,13 @@ up:  ## Start core + kafka + clickhouse + airflow. ~5.5 GB. See the budget in he
 
 demo:  ## Full end-to-end run: start everything, trigger the DAG, wait, report
 	@./scripts/demo.sh
+
+e2e-setup:  ## Install Playwright and its Chromium into .venv (one time, ~100 MB download)
+	@.venv/bin/pip install -q -r requirements/e2e.txt
+	@.venv/bin/playwright install chromium
+
+e2e:  ## Run the pipeline end to end through Airflow's UI with Playwright (E2E_EVENTS=5000)
+	@./scripts/e2e.sh
 
 verify:  ## The done-check: full run + restart/OOM/row-count asserts. Exit 0 = pass. Evidence in verify-report/
 	@./scripts/verify.sh

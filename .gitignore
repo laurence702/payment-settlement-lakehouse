@@ -34,3 +34,5 @@ verify-report*/
 
 docs/social/
 graphify-out/
+e2e-report/
+benchmark-runs/
