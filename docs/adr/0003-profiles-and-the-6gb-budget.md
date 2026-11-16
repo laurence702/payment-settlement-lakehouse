@@ -68,3 +68,35 @@ small psycopg2 pool, not a measurement. `make mem` after a `make verify` run
 is where it gets confirmed or corrected. If it needs more, the donor is chosen
 from a measured peak, not guessed, and this section is updated in the same
 commit.
+
+## Update 2026-11-16: measured corrections, the v2 merge, and the large profile
+
+Measurement during `make verify` showed the 2026-11-15 section above was too
+tight in one place. Redis peaked at 20 MiB against its 32 MB ceiling, not at
+5 MiB. The merge with the v2 scale work reconciled the ceilings once, in
+`.env.example` and `config/profiles/small.env`:
+
+    redis        32 MB -> 48 MB     measured 20 MiB of 32 MB
+    clickhouse  1536 MB -> 1280 MB  v2 removed the query-log tables and set
+                                    max_server_memory_usage=0; measured peak
+                                    about 1 GiB
+    seaweedfs    768 MB -> 1024 MB  v2 finding: weed was OOM-killed at 768 MB;
+                                    GOMEMLIMIT now sits 256 MiB under the cap
+                                    and is configurable as S3_GOMEMLIMIT
+    dag-processor 400 MB -> 384 MB  offsets the redis increase
+
+The summed ceilings are 6200 MB, the same as `main` before the console. They
+exceed a 6 GB VM's usable memory on purpose: services do not peak together, and
+a hard sum under the VM size would leave the heaviest stages starved. Preflight
+now prints the sum next to the VM's real memory and warns when it is larger.
+
+### Profiles
+
+`config/profiles/small.env` is the 6 GB design target and the default.
+`config/profiles/large.env` raises the ceilings and Spark's driver heap for
+Docker VMs of 16 GB and up, where 500k to 1M event runs are the point. Apply
+one with `make profile PROFILE=small|large`; only the keys a profile lists are
+rewritten, so generated secrets are never touched. The large profile exists
+because at that scale the container ceilings, not the pipeline, decide whether
+a run finishes. It is not a claim about any measured result: figures belong in
+`docs/benchmarks.md` and come from `make benchmark` summaries only.

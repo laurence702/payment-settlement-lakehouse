@@ -209,6 +209,7 @@ make test-dbt
 make test-ops
 make test
 make verify
+make e2e
 ```
 
 `make test-ops` starts a throwaway Postgres container and runs the ops store
@@ -218,6 +219,26 @@ store, which is what keeps the fast suite honest.
 `make verify` is the full Docker end-to-end verification; it requires enough
 local Docker capacity and validates the DAG, container health, and non-empty
 reconciliation output.
+`make e2e` resets the stack, then a Playwright browser logs in to Airflow,
+fills the trigger dialog and runs the pipeline from the UI. It asserts that
+every task succeeded on its first try and that the analyst console received the
+breaks. Install the browser once with `make e2e-setup`. `E2E_EVENTS` sets the
+volume (default 5,000); screenshots land in `e2e-report/`.
+
+### Scaling and benchmarks
+
+The 6 GB profile is the default. To measure how far the pipeline goes with more
+room, switch profile and let the runner repeat full runs from empty volumes:
+
+```bash
+make profile PROFILE=large          # needs a Docker VM of 16 GB or more
+make benchmark EVENTS="500000 1000000" RUNS=3 PROFILE=large
+```
+
+Each run records task durations, every container's peak memory, OOM kills,
+restarts and the final mart row count. Failed runs are recorded, not retried.
+Records and a `summary.md` land in `benchmark-runs/` (gitignored); see
+[docs/benchmarks.md](docs/benchmarks.md) for what has been measured so far.
 
 ## Data-quality guarantees
 
