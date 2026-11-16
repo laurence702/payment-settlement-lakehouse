@@ -14,8 +14,12 @@ step "preflight"
 make -s preflight
 
 step "starting platform and airflow (~5.5 GB, this is the whole budget)"
+# --build is a layer-cache no-op when nothing changed. It matters for the ops
+# console, whose code is copied into its image rather than bind-mounted: without
+# it the console can run older migrations than the DAG task that shares its
+# database, and the migration checksum guard (rightly) refuses to continue.
 COMPOSE_PROFILES=core,stream,warehouse,airflow,ops \
-  docker compose --env-file .env up -d
+  docker compose --env-file .env up -d --build
 
 step "waiting for airflow api-server to pass its healthcheck"
 for i in $(seq 1 60); do
