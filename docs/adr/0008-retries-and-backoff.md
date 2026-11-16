@@ -40,3 +40,18 @@ cannot repair a deterministic shortfall.
 starts it again after `--outage-s` seconds, and passes only if the run succeeds
 and `load_clickhouse` needed more than one try. The pipeline code is unchanged
 for the test; the fault is external. Reports go to `chaos-report/`.
+
+### Result (2026-11-16)
+
+`make chaos-retry` with `--events 20000 --outage-s 150`, run
+`chaos_retry__20261116T234711`, passed. Seconds are from the moment ClickHouse
+was stopped:
+
+| Time | Event |
+|---|---|
+| 13 s | `load_clickhouse` try 1 failed, queued for retry |
+| 83 s | try 2 failed after the 1 minute backoff, queued again |
+| 153 s | ClickHouse started again |
+| 251 s | try 3 succeeded after the 2 minute backoff; the run ended `success` |
+
+Without the retry policy the run would have stopped at the first failure.

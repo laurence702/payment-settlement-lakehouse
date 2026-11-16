@@ -138,4 +138,4 @@ Peak MiB sampled every five seconds by `docker stats`; the ceiling is the
 * The `large` (10 GB) profile: not needed, since `medium` completed 1M.
 * Repeats: every figure above is one run. For a distribution:
   `make profile PROFILE=medium && make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`.
-* The retry test result is in `docs/adr/0008-retries-and-backoff.md` once run.
+* Nothing else open: the retry test passed (ADR 0008).
