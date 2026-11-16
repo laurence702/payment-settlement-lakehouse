@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import datetime
 
 DAG_ID = "settlement_pipeline"
 TERMINAL_STATES = {"success", "failed"}
@@ -85,8 +86,20 @@ class AirflowClient:
             {"dag_run_id": run_id, "logical_date": None, "conf": conf},
         )
 
+    def run(self, run_id: str) -> dict:
+        return self._request("GET", f"/api/v2/dags/{DAG_ID}/dagRuns/{run_id}")
+
     def run_state(self, run_id: str) -> str:
-        return self._request("GET", f"/api/v2/dags/{DAG_ID}/dagRuns/{run_id}")["state"]
+        return self.run(run_id)["state"]
+
+    def run_seconds(self, run_id: str) -> float | None:
+        """Airflow's own start-to-end time for the run, or None while it is unfinished."""
+        run = self.run(run_id)
+        if not (run.get("start_date") and run.get("end_date")):
+            return None
+        start = datetime.fromisoformat(run["start_date"])
+        end = datetime.fromisoformat(run["end_date"])
+        return (end - start).total_seconds()
 
     def newest_run(self) -> dict | None:
         """The most recently started DAG run, or None if the DAG has never run."""

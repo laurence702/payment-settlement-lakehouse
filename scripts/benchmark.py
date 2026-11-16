@@ -18,6 +18,7 @@ wrote, with its run id.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import re
 import statistics
@@ -180,6 +181,10 @@ def run_once(args, env: dict[str, str], stack: Stack, events: int, index: int, o
         state = "timeout" if "still not finished" in str(exc) else "api_error"
         record["detail"] = str(exc)
     wall_s = time.monotonic() - began
+    # Airflow's own start-to-end time is authoritative; the local clock also
+    # counts the polling lag before this script noticed the run.
+    with contextlib.suppress(AirflowError):
+        wall_s = client.run_seconds(run_id) or wall_s
     record["peak_memory_mib"] = sampler.stop()
     record["memory_timeline"] = sampler.timeline
     record["peak_total_mib"] = max((s["total_mib"] for s in sampler.timeline), default=None)

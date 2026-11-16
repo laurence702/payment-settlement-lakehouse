@@ -75,6 +75,20 @@ dbt with DuckDB, ClickHouse, and Airflow. It is designed for a 6 GB Docker VM
 
 ## Benchmarks
 
+Scale, measured with `make benchmark` / `--attach` (full tables, memory peaks and
+caveats in [docs/benchmarks.md](docs/benchmarks.md)):
+
+| Events | Profile | Outcome | Airflow run time |
+|---|---|---|---|
+| 500,000 | 6 GB (default) | succeeded, Spark driver at 1,790 of 1,800 MiB | 293 s |
+| 1,000,000 | 6 GB (default) | failed in `spark_raw_to_staged`, driver at its ceiling | n/a |
+| 999,947 | 8 GB (`medium`) | succeeded, no OOM or restart, 63,847 breaks to triage | 391 s |
+
+The 8 GB run used 4.1 GiB across all containers at its peak. These are single
+runs on different CPU counts, not a scaling curve.
+
+The 100,000-event run below is the original reference run.
+
 Numbers from the last successful end-to-end run inside a 6 GB
 Docker VM (`manual__2026-09-28T07:18:08` · 100,000 synthetic events):
 
