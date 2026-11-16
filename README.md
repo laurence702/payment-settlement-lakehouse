@@ -235,6 +235,9 @@ reconciliation output.
 - The analyst console has no authentication. It binds to loopback and takes an
   analyst name per request, so the audit trail records what a user typed, not a
   verified identity. Real use needs SSO and roles.
+- The console, the sync task and the migrations connect to Postgres as the
+  stack's single local superuser. A deployed system would use separate
+  least-privilege roles for migrations, the sync and the console.
 - A case is one row per transaction. A transaction that breaks, is fixed, and
   breaks again shows as one case with its history in the audit trail, not as
   separate cases.
