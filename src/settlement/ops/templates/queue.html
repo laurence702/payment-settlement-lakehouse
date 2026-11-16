@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Triage queue · Settlement ops{% endblock %}
+{% block content %}
+<h1>Triage queue</h1>
+
+<div class="cards">
+  <div class="card"><div class="label">Active cases</div>
+    <div class="value">{{ summary.active_cases }}</div></div>
+  <div class="card"><div class="label">Exposure (NGN)</div>
+    <div class="value">{{ summary.active_exposure_kobo | ngn }}</div></div>
+  <div class="card"><div class="label">Decisions on changed facts</div>
+    <div class="value">{{ summary.drifted_cases }}</div></div>
+</div>
+
+{% if summary.by_break_type %}
+<h2>Active breaks by type</h2>
+<div class="panel"><table>
+  <thead><tr><th>Break type</th><th class="num">Cases</th><th class="num">Exposure (NGN)</th></tr></thead>
+  <tbody>
+  {% for b in summary.by_break_type %}
+    <tr>
+      <td><a href="/?view={{ view }}&break_type={{ b.break_type }}">{{ b.break_type | replace('_', ' ') }}</a></td>
+      <td class="num">{{ b.cases }}</td>
+      <td class="num">{{ b.exposure_kobo | ngn }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+{% endif %}
+
+<h2>Cases</h2>
+<div class="filters">
+  {% for v in ["active", "closed", "cleared", "all"] %}
+    <a href="/?view={{ v }}{% if break_type %}&break_type={{ break_type }}{% endif %}"
+       class="{{ 'on' if v == view else '' }}">{{ v }}</a>
+  {% endfor %}
+  {% if break_type %}<a href="/?view={{ view }}" class="on">{{ break_type | replace('_', ' ') }} ✕</a>{% endif %}
+</div>
+
+<div class="panel">
+{% if cases %}
+<table>
+  <thead><tr>
+    <th>Case</th><th>Break</th><th class="num">Exposure (NGN)</th><th>Succeeded</th>
+    <th>Merchant</th><th>Status</th>
+  </tr></thead>
+  <tbody>
+  {% for c in cases %}
+    <tr>
+      <td><a href="/cases/{{ c.case_id }}">{{ c.display_id }}</a></td>
+      <td>{{ c.break_type | replace('_', ' ') }}</td>
+      <td class="num">{{ c.exposure_kobo | ngn }}</td>
+      <td>{{ c.succeeded_date }}</td>
+      <td>{{ c.merchant_id }}</td>
+      <td>
+        <span class="chip {{ c.effective_status }}">{{ c.effective_status | replace('_', ' ') }}</span>
+        {% if c.drifted %}<span class="chip drift">facts changed</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <div class="empty">No cases in this view.</div>
+{% endif %}
+</div>
+
+<div class="pager">
+  <span>{{ total }} case{{ '' if total == 1 else 's' }} · page {{ page }} of {{ pages }}</span>
+  {% if page > 1 %}<a href="/?view={{ view }}{% if break_type %}&break_type={{ break_type }}{% endif %}&page={{ page - 1 }}">Previous</a>{% endif %}
+  {% if page < pages %}<a href="/?view={{ view }}{% if break_type %}&break_type={{ break_type }}{% endif %}&page={{ page + 1 }}">Next</a>{% endif %}
+</div>
+{% endblock %}
