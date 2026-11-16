@@ -6,13 +6,33 @@ on:
   pull_request:
   workflow_dispatch:
 
-# The point of this workflow: the whole test suite runs without Docker, Kafka,
-# an object store or ClickHouse. If any of it needed those, it could not run
-# here, and "the pipeline is tested" would mean "the pipeline was tested once,
-# on a laptop, by me".
+# The point of this workflow: the whole test suite runs without Kafka, an object
+# store or ClickHouse. If any of it needed those, it could not run here, and
+# "the pipeline is tested" would mean "the pipeline was tested once, on a
+# laptop, by me". The one service it does start is a plain Postgres, because
+# the ops store's guarantees (idempotency keys, row locks, an append-only
+# audit trail) are Postgres behaviour and a fake cannot prove them.
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.10-bookworm
+        env:
+          POSTGRES_USER: dataeng
+          POSTGRES_PASSWORD: dataeng_local_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dataeng"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      # A missing Postgres must fail here, not skip.
+      OPS_REQUIRE_POSTGRES: "1"
     steps:
       - uses: actions/checkout@v5
 
@@ -30,7 +50,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest ruff pyarrow "pyspark==4.2.0" \
-            "dbt-core==1.12.4" "dbt-duckdb==1.11.0" "duckdb==1.5.5"
+            "dbt-core==1.12.4" "dbt-duckdb==1.11.0" "duckdb==1.5.5" \
+            -r requirements/ops.txt "httpx==0.28.1"
 
       - name: Lint
         run: |
