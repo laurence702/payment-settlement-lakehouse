@@ -311,6 +311,38 @@ services:
     networks: [data_network]
 
   # ========================= AIRFLOW =======================================
+  # Analyst console. Published on the loopback interface only: it has no
+  # authentication, so it must not be reachable from the network. See
+  # docs/adr/0007-ops-case-management.md.
+  ops-console:
+    image: ${OPS_IMAGE:-settlement/ops:local}
+    build:
+      context: .
+      dockerfile: docker/ops/Dockerfile
+    container_name: np_ops_console
+    profiles: [ "ops" ]
+    <<: [*restart, *logging]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      OPS_BIND_HOST: 0.0.0.0
+      OPS_PORT: "8080"
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      OPS_DB: ${OPS_DB:-settlement_ops}
+    ports:
+      - "127.0.0.1:${PORT_OPS:-8090}:8080"
+    mem_limit: ${MEM_OPS:-128m}
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8080/readyz', timeout=3)" ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [data_network]
+
   airflow-init:
     <<: *airflow-common
     container_name: np_airflow_init

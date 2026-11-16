@@ -118,6 +118,7 @@ check_port "${PORT_CLICKHOUSE_NATIVE:-9100}" clickhouse-native
 check_port "${PORT_KAFKA:-9092}"             kafka
 check_port "${PORT_REDIS:-6379}"             redis
 check_port "${PORT_AIRFLOW:-8081}"           airflow
+check_port "${PORT_OPS:-8090}"               ops-console
 
 # The bug this repo was born with: hardcoded host paths breaking portability.
 # Filter out standard in-container paths (/home/airflow).

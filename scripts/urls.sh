@@ -11,4 +11,5 @@ printf '  %-11s %s / %s\n'                        ""           "${AIRFLOW_ADMIN_
 printf '  %-11s http://localhost:%s/buckets/\n'   "Files"      "${PORT_S3_UI}"
 printf '  %-11s http://localhost:%s/play\n'       "ClickHouse" "${PORT_CLICKHOUSE_HTTP}"
 printf '  %-11s localhost:%s  (S3 API, no UI)\n'  "S3"         "${PORT_S3_API}"
+printf '  %-11s http://127.0.0.1:%s  (analyst console, local only)\n' "Ops" "${PORT_OPS:-8090}"
 printf '\n'

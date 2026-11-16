@@ -53,3 +53,18 @@ and the `.env` comments say so at the point of change.
   mapped ports are configured to avoid standard collisions (e.g. ClickHouse native port
   remapped to 9100).
 * `make mem` prints live usage against the budget, so drift is visible.
+
+## Update 2026-11-15: analyst console
+
+The `ops` profile adds one container, the analyst console (`MEM_OPS=128m`).
+It shares the existing Postgres server, so it adds no database process. To keep
+the total unchanged, two ceilings were lowered by 64 MB each:
+
+    redis         96 MB -> 32 MB    observed peak 5 MiB
+    api-server   512 MB -> 448 MB   observed peak 278 MiB
+
+The 128 MB ceiling for the console is an estimate for one uvicorn worker and a
+small psycopg2 pool, not a measurement. `make mem` after a `make verify` run
+is where it gets confirmed or corrected. If it needs more, the donor is chosen
+from a measured peak, not guessed, and this section is updated in the same
+commit.

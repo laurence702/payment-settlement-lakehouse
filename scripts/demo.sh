@@ -14,7 +14,7 @@ step "preflight"
 make -s preflight
 
 step "starting platform and airflow (~5.5 GB, this is the whole budget)"
-COMPOSE_PROFILES=core,stream,warehouse,airflow \
+COMPOSE_PROFILES=core,stream,warehouse,airflow,ops \
   docker compose --env-file .env up -d
 
 step "waiting for airflow api-server to pass its healthcheck"
@@ -97,5 +97,6 @@ Done.
   Airflow      http://localhost:${PORT_AIRFLOW}   (${AIRFLOW_ADMIN_USER} / ${AIRFLOW_ADMIN_PASSWORD})
   Files        http://localhost:${PORT_S3_UI}/buckets/   (SeaweedFS filer UI: raw/staged/marts)
   ClickHouse   http://localhost:${PORT_CLICKHOUSE_HTTP}/play
+  Ops console  http://127.0.0.1:${PORT_OPS:-8090}   (triage breaks; local only)
 
 MSG

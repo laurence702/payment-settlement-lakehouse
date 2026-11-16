@@ -195,6 +195,17 @@ def settlement_pipeline():
             raise RuntimeError(f"serving-layer checks failed: {hard}")
         return {"passed": True, "warnings": soft}
 
+    @task
+    def sync_ops_cases() -> dict:
+        """Hand current breaks to the ops store. Writes pipeline-owned columns only."""
+        from settlement.config import get_settings
+        from settlement.ops.migrate import migrate
+        from settlement.ops.sync import run
+
+        settings = get_settings()
+        migrate(settings)
+        return run(settings)
+
     (
         preflight()
         >> generate_events()
@@ -203,6 +214,7 @@ def settlement_pipeline():
         >> dbt_build
         >> load_clickhouse()
         >> serving_quality_checks()
+        >> sync_ops_cases()
     )
 
 
