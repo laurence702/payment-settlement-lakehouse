@@ -18,6 +18,8 @@ import pendulum
 from airflow.providers.standard.operators.bash import BashOperator
 from airflow.sdk import dag, task
 
+from settlement.config import VOLUME_PRESETS
+
 DEFAULT_ARGS = {
     "owner": "data-platform",
     "retries": 1,
@@ -38,7 +40,9 @@ DEFAULT_ARGS = {
     default_args=DEFAULT_ARGS,
     tags=["settlement", "lakehouse", "portfolio"],
     params={
+        "preset": "",  # Presets: "50k", "500k", "1M" (leave empty to use event_count)
         "event_count": int(os.getenv("GEN_EVENT_COUNT", "50000")),
+        "chunk_size": int(os.getenv("GEN_CHUNK_SIZE", "50000")),
         "days": int(os.getenv("GEN_DAYS", "14")),
         "seed": int(os.getenv("GEN_SEED", "20260909")),
         # Bumping this makes the ingest task re-read the topics from the
@@ -81,34 +85,53 @@ def settlement_pipeline():
 
     @task
     def generate_events(**context) -> dict:
-        """Publish synthetic transaction and settlement events to Kafka."""
+        """Publish synthetic transaction and settlement events to Kafka in bounded chunks."""
         from settlement.config import get_settings
-        from settlement.generate import generate_events as gen
-        from settlement.generate import publish
+        from settlement.generate import generate_and_publish_chunked
 
         params = context["params"]
         if params["skip_generate"]:
             return {"skipped": True}
 
+        preset_key = str(params.get("preset", "")).strip()
+        if preset_key in VOLUME_PRESETS:
+            count = VOLUME_PRESETS[preset_key]
+        else:
+            count = int(params.get("event_count", 50_000))
+
+        chunk_size = int(params.get("chunk_size", 50_000))
+        days = int(params["days"])
+        seed = int(params["seed"])
+
         s = get_settings()
-        tx, stl = gen(
-            n_transactions=int(params["event_count"]),
-            days=int(params["days"]),
-            seed=int(params["seed"]),
+        totals = generate_and_publish_chunked(
+            n_transactions=count,
+            days=days,
+            seed=seed,
+            bootstrap=s.kafka_bootstrap,
+            topic_transactions=s.topic_transactions,
+            topic_settlements=s.topic_settlements,
+            chunk_size=chunk_size,
         )
-        published_tx = publish(tx, s.topic_transactions, s.kafka_bootstrap, "transaction_ref")
-        published_stl = publish(stl, s.topic_settlements, s.kafka_bootstrap, "transaction_ref")
-        return {"transactions": published_tx, "settlements": published_stl}
+        return {
+            "transactions": totals["transactions_delivered"],
+            "settlements": totals["settlements_delivered"],
+            "chunks": totals["chunks"],
+        }
 
     @task
     def ingest_to_raw(**context) -> dict:
         """Drain both topics into partitioned Parquet in the raw bucket."""
+        import os
+
         from settlement.config import get_settings
         from settlement.ingest import drain_topic
         from settlement.schemas import settlement_event_schema, transaction_event_schema
 
         s = get_settings()
         suffix = context["params"]["consumer_group_suffix"]
+        batch_rows = int(os.getenv("INGEST_BATCH_ROWS", "50000"))
+        idle_timeout_s = float(os.getenv("INGEST_IDLE_TIMEOUT_S", "12.0"))
         out = {}
         for topic, schema, dataset in (
             (s.topic_transactions, transaction_event_schema(), "transactions"),
@@ -120,6 +143,8 @@ def settlement_pipeline():
                 dataset=dataset,
                 settings=s,
                 group_id=f"settlement-ingest-{dataset}-{suffix}",
+                batch_rows=batch_rows,
+                idle_timeout_s=idle_timeout_s,
             )
         if sum(v["written"] for v in out.values()) == 0:
             raise RuntimeError(
@@ -133,9 +158,7 @@ def settlement_pipeline():
     def spark_raw_to_staged() -> dict:
         """Dedupe, collapse to one row per transaction, derive NGN amounts.
 
-        Runs in local mode inside this task's process. See the memory notes in
-        the .env file: the Spark driver heap lives under the Airflow
-        scheduler container's limit, which is why the scheduler gets 1.8 GB.
+        Runs in local mode inside this task's process. Sized for up to 1M scale.
         """
         import os
 
@@ -145,7 +168,7 @@ def settlement_pipeline():
         return run(
             get_settings(),
             driver_memory=os.getenv("SPARK_DRIVER_MEMORY", "1g"),
-            shuffle_partitions=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "8")),
+            shuffle_partitions=int(os.getenv("SPARK_SHUFFLE_PARTITIONS", "16")),
         )
 
     # dbt runs as a subprocess against its own virtualenv, never imported into

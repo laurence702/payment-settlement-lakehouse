@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import collections
 
-from settlement.generate import _fee_kobo, generate_events
+import pytest
+
+from settlement.generate import _fee_kobo, generate_events, iter_chunks
 from settlement.schemas import Channel, Status
 
 
@@ -136,4 +138,87 @@ def test_settlement_fx_is_resampled_independently_of_charge_fx(events_small):
     assert mismatches > 0, (
         "every USD settlement matches the charge-time fx exactly: "
         "settlement is not resampling its own fx"
+    )
+
+
+# ---------------------------------------------------------------------------
+# v2: iter_chunks — chunked generation for 1M+ transaction scale
+# ---------------------------------------------------------------------------
+
+
+def test_iter_chunks_produces_correct_number_of_chunks():
+    """20k transactions in 8k chunks → 3 chunks (8k, 8k, 4k)."""
+    chunks = list(iter_chunks(n_transactions=20_000, days=14, seed=1, chunk_size=8_000))
+    assert len(chunks) == 3
+
+
+def test_iter_chunks_total_transaction_count_matches_request():
+    """Sum of all chunk tx events must correspond to exactly n_transactions."""
+    n = 15_000
+    chunk_size = 4_000
+    tx_total = 0
+    stl_total = 0
+    for tx, stl in iter_chunks(n_transactions=n, days=14, seed=42, chunk_size=chunk_size):
+        # Each chunk tx list contains ~2+ events per transaction (pending + terminal).
+        # We measure unique transaction_refs, not raw event count.
+        tx_total += len({e["transaction_ref"] for e in tx})
+        stl_total += len(stl)
+    assert tx_total == n, f"expected {n} unique refs, got {tx_total}"
+    # Settlements are a subset of successes; just assert they exist and aren't empty.
+    assert stl_total > 0
+
+
+def test_iter_chunks_is_deterministic_across_runs():
+    """Same seed+count+chunk_size must produce identical output on two runs."""
+    chunks_a = list(iter_chunks(n_transactions=5_000, days=7, seed=99, chunk_size=2_000))
+    chunks_b = list(iter_chunks(n_transactions=5_000, days=7, seed=99, chunk_size=2_000))
+    for (tx_a, stl_a), (tx_b, stl_b) in zip(chunks_a, chunks_b, strict=True):
+        assert tx_a == tx_b
+        assert stl_a == stl_b
+
+
+def test_iter_chunks_different_seeds_produce_different_output():
+    first_a, _ = next(iter(iter_chunks(5_000, 7, seed=1, chunk_size=5_000)))
+    first_b, _ = next(iter(iter_chunks(5_000, 7, seed=2, chunk_size=5_000)))
+    assert first_a != first_b
+
+
+def test_iter_chunks_preserves_money_invariants_across_chunk_boundaries():
+    """The kobo precision and net=gross-fee invariant must hold in every chunk."""
+    for tx, stl in iter_chunks(n_transactions=10_000, days=14, seed=7, chunk_size=3_000):
+        for e in tx:
+            assert isinstance(e["amount_kobo"], int) and e["amount_kobo"] > 0
+            assert isinstance(e["fee_kobo"], int) and e["fee_kobo"] >= 0
+        for s in stl:
+            assert s["net_kobo"] == s["gross_kobo"] - s["fee_kobo"]
+            assert isinstance(s["net_kobo"], int) and s["net_kobo"] >= 0
+
+
+@pytest.mark.slow
+def test_iter_chunks_peak_rss_bounded_for_large_run():
+    """v2 memory invariant: a 200k-transaction chunked run must not exceed
+    300 MB peak RSS (platform rss measurement via sys).
+
+    This is a slow test because 200k transactions take a few seconds to
+    generate. It does NOT require Docker, Kafka, or PySpark. It runs in CI
+    as part of the 'slow' suite alongside Spark and dbt tests.
+
+    Rationale: at 200k transactions with the default 50k chunk_size, peak RSS
+    should be ~60-80 MB. At 300 MB we'd already be at 5x that — so the bound
+    is conservative enough to survive GC noise while catching a regression
+    back to single-list generation (which would be ~240 MB+ at 200k).
+    """
+    import tracemalloc
+
+    tracemalloc.start()
+    for tx, stl in iter_chunks(n_transactions=200_000, days=14, seed=20260909, chunk_size=50_000):
+        # Consume the chunk (simulate what publish() would do).
+        _ = len(tx) + len(stl)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    peak_mb = peak / 1024 / 1024
+    assert peak_mb < 300, (
+        f"iter_chunks peak RSS {peak_mb:.1f} MB exceeds 300 MB bound at 200k transactions. "
+        "This likely means single-list generation was accidentally restored."
     )

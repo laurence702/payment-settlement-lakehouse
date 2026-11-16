@@ -1,0 +1,114 @@
+name: quality
+
+# Runs on every push to v2 feature branches and on every PR targeting main.
+# Unlike the tests workflow (which also covers main pushes), this workflow
+# adds v2-specific quality gates:
+#   - chunked generator memory smoke test (300 MB RSS bound at 200k txns)
+#   - lint enforced before any test run
+#   - separate fast / slow split so small PRs get feedback in < 60 s
+#
+# This workflow deliberately does NOT run make verify (full Docker stack).
+# That is handled by e2e.yml which is triggered on path-relevant PRs.
+
+on:
+  push:
+    branches:
+      - "feat/v2-*"
+      - "fix/v2-*"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: ruff check
+        run: ruff check src tests dags
+
+      - name: ruff format
+        run: ruff format --check src tests dags
+
+  unit:
+    name: Unit tests (no JVM)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyarrow
+
+      - name: Fast unit tests
+        run: pytest -m "not slow" -v
+
+  scale-smoke:
+    name: Chunked generator scale smoke (200k txns, no Kafka)
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyarrow
+
+      - name: Generator memory smoke test
+        # Runs only the single @pytest.mark.slow test that validates
+        # iter_chunks() stays under 300 MB peak RSS at 200k transactions.
+        # This job does NOT start a JVM — it is pure Python stdlib + pyarrow.
+        run: pytest -m slow tests/test_generate.py::test_iter_chunks_peak_rss_bounded_for_large_run -v
+
+  slow:
+    name: Slow tests (JVM + dbt)
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # PySpark 4.x needs a JVM. Nothing else here does.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyarrow "pyspark==4.2.0" \
+            "dbt-core==1.12.4" "dbt-duckdb==1.11.0" "duckdb==1.5.5"
+
+      - name: Spark transform tests
+        run: pytest -m slow tests/test_transform_spark.py -v
+
+      - name: dbt build and test
+        run: pytest -m slow tests/test_dbt.py -v

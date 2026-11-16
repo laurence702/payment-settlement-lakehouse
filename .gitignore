@@ -21,11 +21,16 @@ HANDOVER.md
 *HANDOFF*.md
 docs/assets/*prompt*
 
+# Internal agent memory, session ledgers, and workflow artifacts (never push to public/open-source)
+docs/*MEMORY*.md
+docs/*memory*.md
+*CENTRAL_MEMORY*.md
+scratch/
+.system_generated/
+*.session.json
+
 # make verify evidence
 verify-report*/
 
-# local-only workflow files, never published
-*CENTRAL_MEMORY*.md
 docs/social/
-scratch/
 graphify-out/

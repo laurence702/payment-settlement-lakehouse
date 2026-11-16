@@ -162,7 +162,7 @@ budget, not added to it (ADR 0003).
 
 ## Run locally
 
-Use Docker Desktop or Colima configured with 6 GB and Docker Compose v2.
+Use Docker Desktop or Colima configured with 6 GB RAM and Docker Compose v2.
 
 ```bash
 git clone https://github.com/laurence702/payment-settlement-lakehouse
@@ -177,8 +177,26 @@ make demo
 `make bootstrap` creates the local `.env` and generated development secrets.
 `make preflight` verifies Docker, memory, disk, ports, pins, and environment
 configuration. `make demo` starts the required services, triggers the Airflow
-DAG, and reports the reconciliation result. When the run finishes, the analyst
-console is at `http://127.0.0.1:8090` (the port is `PORT_OPS` in `.env`).
+DAG, and prints the reconciled ClickHouse tables in your terminal. When the run
+finishes, the analyst console is at `http://127.0.0.1:8090` (the port is
+`PORT_OPS` in `.env`).
+
+### Custom scale via terminal (e.g. 200k transactions)
+
+To run a custom transaction volume from the terminal without using the Airflow
+UI, pass `GEN_EVENT_COUNT`:
+
+```bash
+# End-to-end start to ClickHouse summary for 200,000 transactions:
+GEN_EVENT_COUNT=200000 make demo
+```
+
+If the stack is already running, trigger a 200k run directly via the Airflow CLI
+with a fresh consumer group:
+
+```bash
+make dag-trigger ARGS='--conf "{\"event_count\": 200000, \"consumer_group_suffix\": \"run200k\"}"'
+```
 
 ## Test commands
 
