@@ -195,16 +195,18 @@ def test_iter_chunks_preserves_money_invariants_across_chunk_boundaries():
 
 
 @pytest.mark.slow
-def test_iter_chunks_peak_rss_bounded_for_large_run():
+def test_iter_chunks_peak_python_allocations_bounded_for_large_run():
     """v2 memory invariant: a 200k-transaction chunked run must not exceed
-    300 MB peak RSS (platform rss measurement via sys).
+    300 MB of peak traced Python allocations (tracemalloc). This is not process
+    RSS: native and interpreter memory outside the Python allocator is not
+    counted, so it guards against regressions in the generator's own buffering.
 
     This is a slow test because 200k transactions take a few seconds to
     generate. It does NOT require Docker, Kafka, or PySpark. It runs in CI
     as part of the 'slow' suite alongside Spark and dbt tests.
 
-    Rationale: at 200k transactions with the default 50k chunk_size, peak RSS
-    should be ~60-80 MB. At 300 MB we'd already be at 5x that — so the bound
+    Rationale: at 200k transactions with the default 50k chunk_size, peak traced
+    allocations should be ~60-80 MB. At 300 MB we'd already be at 5x that — so the bound
     is conservative enough to survive GC noise while catching a regression
     back to single-list generation (which would be ~240 MB+ at 200k).
     """
@@ -219,6 +221,7 @@ def test_iter_chunks_peak_rss_bounded_for_large_run():
 
     peak_mb = peak / 1024 / 1024
     assert peak_mb < 300, (
-        f"iter_chunks peak RSS {peak_mb:.1f} MB exceeds 300 MB bound at 200k transactions. "
+        f"iter_chunks peak traced allocations {peak_mb:.1f} MB exceed the 300 MB bound "
+        "at 200k transactions. "
         "This likely means single-list generation was accidentally restored."
     )

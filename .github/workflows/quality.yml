@@ -80,9 +80,9 @@ jobs:
 
       - name: Generator memory smoke test
         # Runs only the single @pytest.mark.slow test that validates
-        # iter_chunks() stays under 300 MB peak RSS at 200k transactions.
+        # iter_chunks() stays under 300 MB of traced Python allocations at 200k transactions.
         # This job does NOT start a JVM — it is pure Python stdlib + pyarrow.
-        run: pytest -m slow tests/test_generate.py::test_iter_chunks_peak_rss_bounded_for_large_run -v
+        run: pytest -m slow tests/test_generate.py::test_iter_chunks_peak_python_allocations_bounded_for_large_run -v
 
   slow:
     name: Slow tests (JVM + dbt)
