@@ -80,6 +80,12 @@ What it produced (from ClickHouse and the console after the run):
 | Cases in the analyst console | 63,847 (equals the break count) |
 | Break types | missing_settlement 27,164; short_paid 14,307; overpaid 10,969; reversed_after_settlement 10,410; partial_settlement 4,873 |
 
+Input versus output: the 1,000,000 generated events produce 1,000,000 rows in
+`fct_transactions`, but the reconciliation mart has one row per successful charge,
+plus reversed charges that had a prior settlement. Failed charges and
+anything not settlement-eligible are not reconciled, which is why the mart (881,010 rows) is smaller than the
+input. Breaks are the subset of mart rows that need an analyst.
+
 Peak memory against the `medium` ceilings (sampled every 5 s):
 
 | Container | Peak MiB | Ceiling MiB | Used |
