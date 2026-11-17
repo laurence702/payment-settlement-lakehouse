@@ -6,8 +6,8 @@ here is extrapolated; a size that has not been run is listed as not run.
 
 Environment: Docker VM with 7.82 GiB memory on an Apple M1 host (16 GB). Rows
 marked 6 GB use the `small` profile (`config/profiles/small.env`), rows marked
-8 GB use `medium`. Every run had 8 CPUs except the failed 1,000,000-transaction run on
-the 6 GB profile, which had 2.
+8 GB use `medium`. Every run had 8 CPUs except one 1,000,000-transaction run on the
+6 GB profile, which had 2 and is marked.
 
 Sizes are transactions, not Kafka messages. Each charge emits at least two
 transaction events (pending, then a terminal status, sometimes duplicated or a
@@ -46,11 +46,12 @@ The scheduler container, which hosts the Spark driver in local mode, came within
 across five identical runs. 500,000 passes every time on this profile, with
 almost no memory to spare.
 
-## 1,000,000 transactions on the 6 GB profile, and the first 8 GB run (2026-11-16)
+## 1,000,000 transactions on the 6 GB profile, and the first 8 GB run
 
 | Transactions | Runs | Outcome | Wall time | Mart rows | Run id |
 |---|---|---|---|---|---|
-| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile, 2 CPUs) | 684 s | none | `bench_1000000_1_20261116T155012` |
+| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile, **2 CPUs**, 2026-11-16) | 684 s | none | `bench_1000000_1_20261116T155012` |
+| 1,000,000 | 1 | **failed** in `load_clickhouse`, all 4 attempts (6 GB profile, 8 CPUs, 2026-11-17) | 965 s | none | `bench_1000000_1_20261117T101331` |
 | 1,000,000 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
 
 Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
@@ -62,6 +63,17 @@ was raised to 2,048 MB the task was cleared, succeeded, and the run finished
 `success`. Task times from the UI: generate 2:52, ingest 1:50, Spark 0:43,
 dbt 0:14, load 0:05, quality checks 0:01, ops sync 0:03. A clean, measured
 repeat is the next section.
+
+The 8 CPU run on the 6 GB profile (records in `benchmark-runs/20261117T101331/`)
+got further than the 2 CPU one: `spark_raw_to_staged` passed in 59 s with the
+scheduler container at 1,737 of 1,800 MiB. The run then failed in
+`load_clickhouse`. All four attempts were stopped by ClickHouse's own server
+memory limit, 1.13 GiB (90% of the 1,280 MB ceiling), taken from the task logs:
+code 241 `MEMORY_LIMIT_EXCEEDED` on attempts 1, 3 and 4, and code 33 (out of
+memory reading the mart Parquet) on attempt 2. ClickHouse peaked at 1,204 MiB.
+The retries ran as designed and could not help, because the limit did not
+change between attempts. So the CPU count changes which step fails first at
+1,000,000 transactions on this profile, not whether the run fits.
 
 Conclusion for sizing: 1,000,000 transactions do not run on the 6 GB profile, and this
 project does not claim they do. 500,000 is the ceiling there: it passed 5 of 5,
@@ -249,9 +261,13 @@ for the DAG and unpauses it.
 
 ### Where the budget could be cut (not yet applied)
 
-* The scheduler needed up to 2,737 MiB at 1M transactions, so the 6 GB profile's 1,800 MiB
-  is below what 1M transactions require. The next profile to test is a 6 GB VM with
-  the scheduler near 2.8 GB, funded from the headroom below.
+* On the 8 GB profile (2 GB Spark driver) the scheduler used up to 2,737 MiB at
+  1M transactions, but on the 6 GB profile (1 GB driver, 8 CPUs) Spark finished
+  1M at 1,737 MiB. Scheduler use grows into the room it is given, so the 8 GB
+  peak is not a minimum. At 1M on 6 GB the binding limit is ClickHouse's
+  1,280 MB ceiling, which needs about 1.4 GB or more at this size (see the
+  `lean` section). The next profile to test is a 6 GB VM with ClickHouse raised
+  and the difference funded from the headroom below.
 * Headroom exists in postgres (33% used), ops console (42%), redis (17%),
   seaweedfs (55%) and dag-processor (56%).
 * Do not trim ClickHouse on this evidence. `load_clickhouse` lasts about 3 s, so
@@ -266,25 +282,28 @@ Peak MiB sampled every five seconds by `docker stats` on the 6 GB profile; the
 ceiling is the `small` profile value. The 500k column is the highest peak across
 its five runs.
 
-| Container | 500k (max of 5 runs) | 1M (failed run) | Ceiling |
-|---|---|---|---|
-| airflow scheduler (runs Spark) | **1,788** | **1,798** | 1,800 |
-| seaweedfs | 588 | 523 | 1,024 |
-| kafka | 487 | 640 | 768 |
-| clickhouse | 479 | 539 | 1,280 |
+| Container | 500k (max of 5 runs) | 1M, 2 CPUs (failed in Spark) | 1M, 8 CPUs (failed in load) | Ceiling |
+|---|---|---|---|---|
+| airflow scheduler (runs Spark) | **1,788** | **1,798** | 1,737 | 1,800 |
+| seaweedfs | 588 | 523 | 601 | 1,024 |
+| kafka | 487 | 640 | 663 | 768 |
+| clickhouse | 479 | 539 | **1,204** | 1,280 |
 
 ## What this says
 
 * The 6 GB profile finishes 500,000 transactions every time (5 of 5), but with almost
   no margin: the scheduler container, which hosts the Spark driver in local
   mode, peaked at 1,788 MiB of 1,800.
-* At 1,000,000 transactions the scheduler peak reached its ceiling (1,798 of 1,800
-  MiB) and `spark_raw_to_staged` failed on both attempts. Docker did not report
-  an OOM kill on a container, because the task process is what is killed, not
-  the container. That the memory ceiling caused the failure is inferred from
-  the peak equalling the limit; it was not confirmed from the kernel log.
-* ClickHouse, Postgres and the console stay flat. The pressure is the Spark
-  driver and the generator, not the warehouse.
+* At 1,000,000 transactions with 2 CPUs the scheduler peak reached its ceiling
+  (1,798 of 1,800 MiB) and `spark_raw_to_staged` failed on both attempts. Docker
+  did not report an OOM kill on a container, because the task process is what is
+  killed, not the container. That the memory ceiling caused this failure is
+  inferred from the peak equalling the limit; it was not confirmed from a log.
+* At 1,000,000 transactions with 8 CPUs Spark passed and ClickHouse failed on
+  its own logged 1.13 GiB server limit, four attempts out of four. That failure
+  is confirmed by the error codes, not inferred.
+* Postgres and the console stay flat at every size. The pressure is the
+  scheduler (Spark driver and generator) and, at 1,000,000, the ClickHouse load.
 
 ## Not yet run
 

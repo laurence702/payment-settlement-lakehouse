@@ -83,13 +83,13 @@ caveats in [docs/benchmarks.md](docs/benchmarks.md)):
 | 20,000 | 6 GB (default), 5 runs | 5 of 5 succeeded, no OOM or restart | 64 to 67 s (median 66 s) |
 | 200,000 | 6 GB (default), 5 runs | 5 of 5 succeeded, no OOM or restart | 114 to 120 s (median 117 s) |
 | 500,000 | 6 GB (default), 5 runs | 5 of 5 succeeded, scheduler container (hosts the Spark driver) peaked at 1,788 of 1,800 MiB | 207 to 213 s (median 208 s) |
-| 1,000,000 | 6 GB (default) | failed in `spark_raw_to_staged`, scheduler container at its ceiling (1,798 of 1,800 MiB) | n/a |
+| 1,000,000 | 6 GB (default), 8 CPUs | failed: Spark passed (scheduler 1,737 of 1,800 MiB), then ClickHouse refused the load at its 1.13 GiB server limit on all 4 attempts | n/a |
+| 1,000,000 | 6 GB (default), 2 CPUs | failed in `spark_raw_to_staged`, scheduler container at its ceiling (1,798 of 1,800 MiB) | n/a |
 | 1,000,000 | 8 GB (`medium`), 5 runs | 5 of 5 succeeded, no OOM or restart, all containers peaked at 3,910 to 4,448 MiB (4.34 GiB max) | 345 to 357 s (median 349 s) |
 | 1,000,000 | `lean` (ceilings sum to 6.7 GiB, 7.8 GiB VM), 3 runs | 3 of 3 succeeded, Kafka at 97% of its ceiling | 352 to 361 s (median 360 s) |
 
 Sizes are transactions; 1,000,000 transactions publish 2,884,598 Kafka events
-(counts per size in `docs/benchmarks.md`). All rows ran on a 7.82 GiB, 8 CPU Docker VM except the failed 1,000,000-transaction
-6 GB run, which had 2 CPUs. Run ids are in `docs/benchmarks.md`.
+(counts per size in `docs/benchmarks.md`). All rows ran on a 7.82 GiB, 8 CPU Docker VM except the row marked 2 CPUs. Run ids are in `docs/benchmarks.md`.
 
 The 100,000-transaction run below is the original reference run.
 

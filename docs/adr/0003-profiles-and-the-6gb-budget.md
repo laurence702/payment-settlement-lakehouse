@@ -111,8 +111,11 @@ clickhouse 794 of 2,048, kafka 562 of 768, seaweedfs 561 of 1,024, api-server
 302 of 448, dag-processor 216 of 384, postgres 107 of 320, console 54 of 128,
 redis 8 of 48. Two consequences:
 
-* The 6 GB profile's 1,800 MiB scheduler ceiling is below what 1M transactions need
-  (2,430 MiB), which is why 1M fails there.
+* The 6 GB profile does not run 1M transactions. With 2 CPUs the Spark step
+  failed at the 1,800 MiB scheduler ceiling. With 8 CPUs (2026-11-17) Spark
+  passed at 1,737 MiB and the ClickHouse load failed four times on its 1.13 GiB
+  server limit (code 241, from the task logs). The 2,430 MiB scheduler peak
+  above is what Spark used with a 2 GB driver and room to grow, not a minimum.
 * ClickHouse's measured 39% is a lower bound, because the load lasts about 3 s
   and the sampler runs every 5 s. No ceiling is changed on this evidence.
 
