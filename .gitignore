@@ -1,4 +1,12 @@
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.tfstate
+*.tfstate.*
+.databrickscfg
+.databricks/
 .DS_Store
 __pycache__/
 *.pyc
@@ -13,6 +21,12 @@ data/local/
 *.duckdb.wal
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
 
 *.log
 .user.yml
