@@ -4,18 +4,40 @@ Every figure here was written by `scripts/benchmark.py` (`make benchmark`) and
 comes from the run id beside it. Each run started from empty volumes. Nothing
 here is extrapolated; a size that has not been run is listed as not run.
 
-Environment: Docker VM with 7.8 GiB memory on an Apple M1 host (16 GB). The
-20k to 1M rows marked 6 GB profile ran with 2 CPUs on the `small` profile
-(`config/profiles/small.env`); the 8 GB profile runs had 8 CPUs on `medium`.
-One run per size unless stated, 2026-11-16. A single run is a data point, not a
-distribution, and times across the two CPU counts are not comparable.
+Environment: Docker VM with 7.82 GiB memory on an Apple M1 host (16 GB). Rows
+marked 6 GB use the `small` profile (`config/profiles/small.env`), rows marked
+8 GB use `medium`. The five-run 6 GB sets (2026-11-17) and every 8 GB run had
+8 CPUs; the earlier single 6 GB runs (2026-11-16) had 2 CPUs, so their times are
+not comparable with the rest.
+
+## 6 GB profile, five runs per size (2026-11-17)
+
+`make benchmark EVENTS="20000 200000 500000" RUNS=5 PROFILE=small`, records in
+`benchmark-runs/20261117T082942/`. **15 of 15 succeeded**: no failed task, no
+OOM kill, no restart, and the same mart row count on every run of a size.
+
+| Events | Runs | Outcome | Airflow run time (min / median / max) | Peak, all containers | Scheduler peak (ceiling 1,800 MiB) | Mart rows | Run ids |
+|---|---|---|---|---|---|---|---|
+| 20,000 | 5 | 5 of 5 succeeded | 63.6 / 66.0 / 67.3 s | 2,435 MiB | 990 to 1,214 MiB | 17,668 | `bench_20000_1_20261117T082942`, `bench_20000_2_20261117T083139`, `bench_20000_3_20261117T083336`, `bench_20000_4_20261117T083533`, `bench_20000_5_20261117T083726` |
+| 200,000 | 5 | 5 of 5 succeeded | 113.8 / 117.3 / 119.5 s | 3,120 MiB | 1,328 to 1,585 MiB | 176,043 | `bench_200000_1_20261117T083918`, `bench_200000_2_20261117T084205`, `bench_200000_3_20261117T084453`, `bench_200000_4_20261117T084735`, `bench_200000_5_20261117T085017` |
+| 500,000 | 5 | 5 of 5 succeeded | 206.7 / 207.8 / 213.1 s | 3,435 MiB | 1,462 to 1,788 MiB | 440,363 | `bench_500000_1_20261117T085303`, `bench_500000_2_20261117T085721`, `bench_500000_3_20261117T090139`, `bench_500000_4_20261117T090557`, `bench_500000_5_20261117T091016` |
+
+Median task times at 500,000 events: generate 85.1 s, ingest 67.4 s, Spark 33.4 s,
+dbt 10.1 s, load 1.8 s, quality checks 0.4 s, ops sync 1.5 s.
+
+The scheduler container, which hosts the Spark driver in local mode, came within
+12 MiB of its 1,800 MiB ceiling at 500,000 events, and its peak varied by 326 MiB
+across five identical runs. 500,000 passes every time on this profile, with
+almost no memory to spare.
+
+## Single runs (2026-11-16)
 
 | Events | Runs | Outcome | Wall time | Mart rows | Run id |
 |---|---|---|---|---|---|
-| 20,000 | 2 | 2 of 2 succeeded | 81 s, 81 s | 17,668 | `bench_20000_1_20261116T153548`, `bench_20000_2_20261116T153753` |
-| 200,000 | 1 | succeeded | 146 s | 176,043 | `bench_200000_1_20261116T154023` |
-| 500,000 | 1 | succeeded | 293 s | 440,363 | `bench_500000_1_20261116T154404` |
-| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile) | 684 s | none | `bench_1000000_1_20261116T155012` |
+| 20,000 | 2 | 2 of 2 succeeded (6 GB, 2 CPUs) | 81 s, 81 s | 17,668 | `bench_20000_1_20261116T153548`, `bench_20000_2_20261116T153753` |
+| 200,000 | 1 | succeeded (6 GB, 2 CPUs) | 146 s | 176,043 | `bench_200000_1_20261116T154023` |
+| 500,000 | 1 | succeeded (6 GB, 2 CPUs) | 293 s | 440,363 | `bench_500000_1_20261116T154404` |
+| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB, 2 CPUs) | 684 s | none | `bench_1000000_1_20261116T155012` |
 | 1,000,000 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
 
 Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
@@ -28,27 +50,13 @@ was raised to 2,048 MB the task was cleared, succeeded, and the run finished
 dbt 0:14, load 0:05, quality checks 0:01, ops sync 0:03. A clean, measured
 repeat is the next section.
 
-### Repeat runs before the machine was reformatted (author-reported)
-
-From 20,000 up to 500,000 events on the 6 GB default profile, the author ran each
-size successfully at least five times on the same Mac before it was reformatted.
-Those runs were not captured by `scripts/benchmark.py`, so there are no run ids,
-timings or memory samples for them, and this table is a statement by the author,
-not a recorded measurement. The recorded rows above are the evidence; these rows
-only say the recorded runs were not flukes.
-
-| Events | Profile | Repeat runs | Outcome | Evidence |
-|---|---|---|---|---|
-| 20,000 to 500,000 | 6 GB (`small`) | 5 or more per size | all succeeded | author-reported, not recorded |
-| 1,000,000 | 6 GB (`small`) | 1 | failed in `spark_raw_to_staged` | `bench_1000000_1_20261116T155012` |
-
 Conclusion for sizing: 1,000,000 events do not run on the 6 GB profile, and this
-project does not claim they do. 500,000 is the ceiling there, with the scheduler
-container (which hosts the Spark driver) at 1,790 of 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB
-profile.
+project does not claim they do. 500,000 is the ceiling there: it passed 5 of 5,
+but the scheduler container (which hosts the Spark driver) peaked at 1,788 of
+1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB profile.
 
-Wall time is trigger to terminal state and excludes stack start-up. The 20k
-wall times were sampled at a coarser poll interval than the later runs.
+Wall time is trigger to terminal state and excludes stack start-up. The
+2026-11-16 20k wall times were sampled at a coarser poll interval than later runs.
 
 ## 1,000,000 events on the 8 GB profile, measured
 
