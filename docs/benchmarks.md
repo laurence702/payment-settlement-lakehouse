@@ -28,6 +28,25 @@ was raised to 2,048 MB the task was cleared, succeeded, and the run finished
 dbt 0:14, load 0:05, quality checks 0:01, ops sync 0:03. A clean, measured
 repeat is the next section.
 
+### Repeat runs before the machine was reformatted (author-reported)
+
+From 20,000 up to 500,000 events on the 6 GB default profile, the author ran each
+size successfully at least five times on the same Mac before it was reformatted.
+Those runs were not captured by `scripts/benchmark.py`, so there are no run ids,
+timings or memory samples for them, and this table is a statement by the author,
+not a recorded measurement. The recorded rows above are the evidence; these rows
+only say the recorded runs were not flukes.
+
+| Events | Profile | Repeat runs | Outcome | Evidence |
+|---|---|---|---|---|
+| 20,000 to 500,000 | 6 GB (`small`) | 5 or more per size | all succeeded | author-reported, not recorded |
+| 1,000,000 | 6 GB (`small`) | 1 | failed in `spark_raw_to_staged` | `bench_1000000_1_20261116T155012` |
+
+Conclusion for sizing: 1,000,000 events do not run on the 6 GB profile, and this
+project does not claim they do. 500,000 is the ceiling there, with the Spark driver
+at 1,790 of 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB
+profile.
+
 Wall time is trigger to terminal state and excludes stack start-up. The 20k
 wall times were sampled at a coarser poll interval than the later runs.
 

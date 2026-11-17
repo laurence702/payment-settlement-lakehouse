@@ -6,8 +6,10 @@ Antigravity, Codex, Cursor). Read this before doing anything.
 ## What this repo is
 
 A payment settlement lakehouse: Kafka, SeaweedFS (S3), PySpark, dbt-duckdb,
-ClickHouse, orchestrated by Airflow 3.3.1. It must fit in a 6 GB Docker VM.
-The memory budget is a design constraint, not a bug: read
+ClickHouse, orchestrated by Airflow 3.3.1. The default profile must fit in a 6 GB
+Docker VM and is measured to 500,000 events; 1,000,000 events need the 8 GB
+`medium` profile (`docs/benchmarks.md`). The memory budget is a design
+constraint, not a bug: read
 `docs/adr/0003-profiles-and-the-6gb-budget.md` before touching any `MEM_*`.
 
 ## Definition of done
@@ -36,7 +38,8 @@ the `verify-report` artifact of the `e2e` run on GitHub.
 
 Stop and ask the human only if:
 
-- the fix needs the total memory budget raised above ~5.5 GB, or
+- the fix needs the default profile's total memory budget raised above ~5.5 GB
+  (larger sizes belong in a named profile under `config/profiles/`), or
 - the fix changes a public contract (mart schemas, topic names, bucket layout), or
 - five iterations have not moved the failing check.
 
@@ -53,15 +56,10 @@ assumption in the PR, and keep going.
 - Money is integer kobo end to end. Never floats.
 - Every change to a `src/` module comes with a test in `tests/`.
 
-## Open issue (as of 2026-09-16)
+## Resolved: SeaweedFS OOM during Spark writes
 
-SeaweedFS (`np_seaweedfs`) is OOM-killed during Spark writes. The kernel log
-from `scripts/capture_seaweedfs_restart.sh` shows `weed` at ~860 MB RSS
-against `MEM_S3=768m`, which `.env.example` itself marks as an unmeasured
-estimate. Go's GC grows toward whatever memory is available unless told
-otherwise. Hypotheses to test, in order:
-
-1. Set `GOMEMLIMIT` on the seaweedfs service a little under `MEM_S3`, so the
-   GC works to stay inside the cgroup instead of being killed at it.
-2. If that is not enough, measure the peak from `verify-report/mem-samples.txt`
-   and rebalance `MEM_S3` against another service within the budget.
+`np_seaweedfs` was OOM-killed at ~860 MB RSS against `MEM_S3=768m` because Go's
+GC grows toward available memory. `GOMEMLIMIT` is now set on the service
+(`S3_GOMEMLIMIT`, below `MEM_S3` in every profile) and the 500,000 and
+1,000,000-event runs in `docs/benchmarks.md` finish with no restart. Write-up:
+`docs/debugging/2026-09-seaweedfs-oom.md`.

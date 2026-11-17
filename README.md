@@ -80,13 +80,13 @@ caveats in [docs/benchmarks.md](docs/benchmarks.md)):
 
 | Events | Profile | Outcome | Airflow run time |
 |---|---|---|---|
-| 500,000 | 6 GB (default) | succeeded, Spark driver at 1,790 of 1,800 MiB | 293 s |
+| 20,000 to 500,000 | 6 GB (default), 5 or more runs per size | all succeeded (author-reported, runs before a machine reformat were not recorded) | n/a |
+| 500,000 | 6 GB (default), recorded run | succeeded, Spark driver at 1,790 of 1,800 MiB | 293 s |
 | 1,000,000 | 6 GB (default) | failed in `spark_raw_to_staged`, driver at its ceiling | n/a |
 | 1,000,000 | 8 GB (`medium`), 3 runs | 3 of 3 succeeded, no OOM or restart, 4.1 GiB peak across containers | 345 to 357 s (median 354 s) |
-
 | 1,000,000 | `lean` (ceilings sum to 6.7 GiB, 7.8 GiB VM), 3 runs | 3 of 3 succeeded, Kafka at 97% of its ceiling | 352 to 361 s (median 360 s) |
 
-The 6 GB rows are single runs on 2 CPUs; the 8 GB rows ran on 8 CPUs. They are
+The recorded 6 GB rows ran on 2 CPUs; the 8 GB rows ran on 8 CPUs. They are
 not a scaling curve.
 
 The 100,000-event run below is the original reference run.

@@ -2,6 +2,8 @@
 
 All figures from the successful DAG run: `manual__2026-09-28T07:18:08.923815+00:00`
 
+> This page analyses the original 100,000-event reference run. Larger sizes, repeats and memory peaks are in [benchmarks.md](benchmarks.md).
+
 ---
 
 ## 1. The Raw Numbers
