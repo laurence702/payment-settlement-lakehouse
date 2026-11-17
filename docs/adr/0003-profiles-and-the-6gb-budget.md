@@ -121,3 +121,9 @@ scheduler peaked at 2,291 to 2,512 MiB, ClickHouse at 491 to 654 MiB, and all
 containers together at 3.9 to 4.1 GiB. The next experiment, not yet run, is a
 6 GB VM profile with the scheduler near 2.8 GB; any ceiling trim is made from
 these numbers and recorded here in the same commit.
+
+That experiment is the `lean` profile (scheduler 2,816 MB, ClickHouse 1,536 MB).
+Three 1M runs passed on the 7.8 GiB VM with a peak of 4.2 GiB across containers.
+ClickHouse reached 1,243 MiB, so it needs about 1.4 GB or more at this size, and
+Kafka reached 97% of its 768 MB ceiling. Whether the profile fits a VM limited
+to 6 GB is untested.

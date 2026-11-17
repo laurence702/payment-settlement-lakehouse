@@ -127,6 +127,52 @@ All containers together peaked at 4,138 MiB. The spread between runs is under 4%
 on wall time, so the 8 GB profile is stable at 1M on this machine. The single
 UI run's slower Spark step (83 s against 47.6 s here) is unexplained.
 
+### The `lean` profile at 1,000,000 events
+
+`config/profiles/lean.env`: scheduler 2,816 MB, ClickHouse 1,536 MB, SeaweedFS
+768 MB, Kafka 768 MB, the rest trimmed toward their measured peaks; ceilings sum
+to about 6.7 GiB. Three runs from wiped volumes, same 7.82 GiB, 8 CPU VM
+(records in `benchmark-runs/20261117T001636/`). **3 of 3 succeeded**, every task
+on its first try, no OOM kill, no restart, 881,010 mart rows each.
+
+| Run | Airflow run time | Peak, all containers | Scheduler | ClickHouse | Kafka |
+|---|---|---|---|---|---|
+| `bench_1000000_1_20261117T001636` | 361.2 s | 3,830 MiB | 2,358 | 815 | 507 |
+| `bench_1000000_2_20261117T004015` | 351.5 s | 4,194 MiB | 2,473 | 1,243 | 745 |
+| `bench_1000000_3_20261117T004653` | 360.3 s | 4,115 MiB | 2,455 | 688 | 683 |
+
+Run time: min 352 s, median 360 s, max 361 s, about the same as `medium`
+(345 to 357 s). The trimmed ceilings cost no speed.
+
+What the peaks say about each ceiling (worst run against `lean`):
+
+| Container | Peak MiB | Ceiling MiB | Used |
+|---|---|---|---|
+| kafka | 745 | 768 | **97%** |
+| scheduler | 2,473 | 2,816 | 88% |
+| clickhouse | 1,243 | 1,536 | 81% |
+| seaweedfs | 531 | 768 | 69% |
+| api-server | 296 | 384 | 77% |
+| dag-processor | 217 | 256 | 85% |
+| ops console | 59 | 96 | 61% |
+| postgres | 99 | 192 | 52% |
+
+* ClickHouse reached 1,243 MiB in one run, so the earlier note that 794 MiB was a
+  floor was right. Its server limit is 90% of the ceiling, so it needs a ceiling
+  of about 1.4 GB or more at this size. 1,280 MB is below that.
+* Kafka at 97% is the weakest point. It passed three times, but different broker
+  timing could push it over. Do not trim it; raising it to 896 MB is the likelier
+  next change.
+* Not shown by this evidence: that 1M fits a real 6 GB VM. The VM was 7.82 GiB,
+  so the memory the host had beyond the container ceilings (page cache, the Docker
+  daemon) was not constrained. The all-container peak of 4.2 GiB suggests it
+  could. The test is to set the Docker VM to 6 GB and run
+  `make profile PROFILE=lean && make benchmark EVENTS=1000000 RUNS=3 PROFILE=lean`.
+
+The first `lean` run sat queued for 17 minutes because the reset left the DAG
+paused. That wait is outside Airflow's run time, and the reset script now waits
+for the DAG and unpauses it.
+
 ### Where the budget could be cut (not yet applied)
 
 * The scheduler needed 2,430 MiB at 1M events, so the 6 GB profile's 1,800 MiB

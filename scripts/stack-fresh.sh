@@ -44,5 +44,15 @@ for i in $(seq 1 60); do
 done
 
 ./scripts/create-topics.sh > /dev/null
-docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline > /dev/null
+# The DAG file is parsed some seconds after the scheduler starts; unpausing before
+# that fails or is lost. Wait until the DAG is registered, then confirm it is
+# unpaused, because a paused DAG leaves a triggered run queued forever.
+for _ in $(seq 1 30); do
+  docker exec np_airflow_scheduler airflow dags unpause settlement_pipeline > /dev/null 2>&1 || true
+  paused=$(docker exec np_airflow_scheduler airflow dags list -o json 2>/dev/null \
+    | python3 -c 'import json,sys; d=[x for x in json.load(sys.stdin) if x["dag_id"]=="settlement_pipeline"]; print(d[0]["is_paused"] if d else "missing")' 2>/dev/null || echo missing)
+  [ "$paused" = False ] && break
+  [ "$_" = 30 ] && { echo "settlement_pipeline never became unpaused" >&2; exit 1; }
+  sleep 5
+done
 echo "stack ready: Airflow on http://localhost:${PORT_AIRFLOW}"
