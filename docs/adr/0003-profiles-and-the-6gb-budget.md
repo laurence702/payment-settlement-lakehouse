@@ -114,5 +114,10 @@ redis 8 of 48. Two consequences:
 * The 6 GB profile's 1,800 MiB scheduler ceiling is below what 1M events need
   (2,430 MiB), which is why 1M fails there.
 * ClickHouse's measured 39% is a lower bound, because the load lasts about 3 s
-  and the sampler runs every 5 s. No ceiling is changed on this evidence; a
-  trim needs three repeat runs first.
+  and the sampler runs every 5 s. No ceiling is changed on this evidence.
+
+Three repeat runs at the same size confirmed the picture: 3 of 3 succeeded, the
+scheduler peaked at 2,291 to 2,512 MiB, ClickHouse at 491 to 654 MiB, and all
+containers together at 3.9 to 4.1 GiB. The next experiment, not yet run, is a
+6 GB VM profile with the scheduler near 2.8 GB; any ceiling trim is made from
+these numbers and recorded here in the same commit.

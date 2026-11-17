@@ -80,6 +80,29 @@ this run). The summed ceilings (8.3 GiB) were never approached because the
 peaks do not coincide: Spark's peak is during `spark_raw_to_staged`, the others
 are lower while it runs.
 
+### Three repeats (8 GB profile, 1,000,000 events)
+
+`make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`, each run from freshly
+wiped volumes, 8 CPUs, 7.82 GiB VM. Records in `benchmark-runs/20261116T235346/`.
+**3 of 3 succeeded**, every task on its first try, no OOM kill, no restart,
+881,010 mart rows each time.
+
+| Run | Airflow run time | Peak, all containers | Scheduler peak | ClickHouse peak |
+|---|---|---|---|---|
+| `bench_1000000_1_20261116T235346` | 353.5 s | 3,976 MiB | 2,322 MiB | 632 MiB |
+| `bench_1000000_2_20261117T000019` | 344.9 s | 3,910 MiB | 2,291 MiB | 654 MiB |
+| `bench_1000000_3_20261117T000650` | 357.1 s | 4,138 MiB | 2,512 MiB | 491 MiB |
+
+Run time: min 345 s, median 354 s, max 357 s. Median task times: generate 170 s,
+ingest 105 s, Spark 48 s, dbt 14 s, load 3.7 s, quality checks 0.9 s, ops sync
+3.6 s. The hand-run above took 83 s in Spark against 48 s here; that run had the
+Airflow UI and a browser open and I did not isolate the cause, so treat Spark
+time as variable, not as a fixed figure.
+
+Across all four 8 GB runs the scheduler peaked between 2,291 and 2,512 MiB
+(75% of its 3,328 MiB ceiling at the worst), and every container stayed under
+its ceiling.
+
 ### Where the budget could be cut (not yet applied)
 
 * The scheduler needed 2,430 MiB at 1M events, so the 6 GB profile's 1,800 MiB
