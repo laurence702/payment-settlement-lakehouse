@@ -103,6 +103,30 @@ Across all four 8 GB runs the scheduler peaked between 2,291 and 2,512 MiB
 (75% of its 3,328 MiB ceiling at the worst), and every container stayed under
 its ceiling.
 
+### Three repeats, 1,000,000 events, 8 GB profile
+
+`make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`, each run from wiped volumes
+(`benchmark-runs/20261116T235346/`, 8 CPUs, 7.82 GiB VM). **3 of 3 succeeded**: no
+failed task, no OOM kill, no restart, 881,010 mart rows every time. Note that this
+runner timed from when it noticed the run and not from Airflow's own clock (the
+version that read Airflow's start and end times was written after these ran), so
+read these as about 5 seconds low compared with the 391 s UI run.
+
+| Metric | Min | Median | Max |
+|---|---|---|---|
+| Wall time (s) | 344.9 | 353.5 | 357.1 |
+| generate_events (s) | | 170.3 | 171.3 |
+| ingest_to_raw (s) | | 105.1 | 106.4 |
+| spark_raw_to_staged (s) | | 47.6 | 47.8 |
+| dbt_build (s) | | 14.4 | 16.0 |
+| load_clickhouse (s) | | 3.7 | 3.8 |
+
+Peak MiB across the three runs: scheduler 2,512, kafka 666, clickhouse 654,
+seaweedfs 596, api-server 290, dag-processor 191, postgres 86, console 55, redis 6.
+All containers together peaked at 4,138 MiB. The spread between runs is under 4%
+on wall time, so the 8 GB profile is stable at 1M on this machine. The single
+UI run's slower Spark step (83 s against 47.6 s here) is unexplained.
+
 ### Where the budget could be cut (not yet applied)
 
 * The scheduler needed 2,430 MiB at 1M events, so the 6 GB profile's 1,800 MiB
@@ -113,8 +137,8 @@ its ceiling.
 * Do not trim ClickHouse on this evidence. `load_clickhouse` lasts about 3 s, so
   a 5 s sampler can miss its peak, and the same task was rejected at a 1,280 MB
   ceiling in an earlier run. 39% is a lower bound on the real peak.
-* One run is a data point. Repeat with `make benchmark RUNS=3` before changing a
-  ceiling, and record the change in ADR 0003 and `.env.example` together.
+* Three repeats are now recorded above and agree. A ceiling change still needs
+  its own three-run benchmark, recorded in ADR 0003 and `.env.example` together.
 
 Caveat on comparisons: the 20k to 1M rows above the `medium` section were run on
 a VM with 2 CPUs; this one had 8. Do not read the 500k and 1M times as a
@@ -159,6 +183,5 @@ Peak MiB sampled every five seconds by `docker stats`; the ceiling is the
 ## Not yet run
 
 * The `large` (10 GB) profile: not needed, since `medium` completed 1M.
-* Repeats: every figure above is one run. For a distribution:
-  `make profile PROFILE=medium && make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`.
+* Repeats on a trimmed profile, which is the next experiment.
 * Nothing else open: the retry test passed (ADR 0008).
