@@ -1,7 +1,9 @@
 # AGENTS.md
 
 Standing instructions for any coding agent working in this repo (Claude Code,
-Antigravity, Codex, Cursor). Read this before doing anything.
+Antigravity, Codex, Cursor). Read this before doing anything. If
+`AGENTS.local.md` exists, read it too: it holds maintainer-specific settings and
+is not tracked.
 
 ## What this repo is
 

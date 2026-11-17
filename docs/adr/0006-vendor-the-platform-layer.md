@@ -10,11 +10,10 @@ Redis, SeaweedFS, Kafka, ClickHouse) from a sibling repo,
 README's own quickstart told a reader to clone both repos side by side.
 
 That sibling repo has never had a git remote. `git remote -v` in it returns
-nothing, as of the date on this ADR. `scripts/publish.sh`'s own STEP 1 already
-anticipated this exact failure mode: "if that repo is private or missing, the
-quickstart is broken on arrival." It was missing. For anyone who is not
-Laurence, on a fresh clone, the README's second `git clone` line 404s and
-nothing after it runs.
+nothing, as of the date on this ADR. The publishing checklist had already
+anticipated this exact failure mode: if that repo is private or missing, the
+quickstart is broken on arrival. It was missing. For anyone but the author, on a
+fresh clone, the README's second `git clone` line 404s and nothing after it runs.
 
 Separately, `docker-compose.yml`'s own header comment claimed the sibling repo
 was pulled in as a git submodule ("which is what makes `git clone

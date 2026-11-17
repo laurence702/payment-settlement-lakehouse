@@ -51,3 +51,8 @@ graphify-out/
 e2e-report/
 benchmark-runs/
 chaos-report/
+
+# Maintainer-only agent rules and personal publishing tooling (never track)
+AGENTS.local.md
+CLAUDE.local.md
+scripts/publish.sh
