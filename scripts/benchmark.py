@@ -137,7 +137,9 @@ def wait_for_external_run(client: AirflowClient, timeout_s: float) -> tuple[str,
         run = client.newest_run()
         if run and run["dag_run_id"] != known and run["state"] in ("queued", "running"):
             conf = run.get("conf") or {}
-            events = int(conf.get("event_count") or VOLUME_PRESETS.get(conf.get("preset", ""), 0))
+            # Same precedence as the DAG: a known preset overrides event_count.
+            preset = str(conf.get("preset", "")).strip()
+            events = VOLUME_PRESETS.get(preset) or int(conf.get("event_count") or 0)
             print(f"observing {run['dag_run_id']} ({events:,} events)", flush=True)
             return run["dag_run_id"], events
         time.sleep(5)
