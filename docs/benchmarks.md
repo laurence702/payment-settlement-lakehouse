@@ -6,9 +6,8 @@ here is extrapolated; a size that has not been run is listed as not run.
 
 Environment: Docker VM with 7.82 GiB memory on an Apple M1 host (16 GB). Rows
 marked 6 GB use the `small` profile (`config/profiles/small.env`), rows marked
-8 GB use `medium`. The five-run 6 GB sets (2026-11-17) and every 8 GB run had
-8 CPUs; the earlier single 6 GB runs (2026-11-16) had 2 CPUs, so their times are
-not comparable with the rest.
+8 GB use `medium`. Every run had 8 CPUs except the failed 1,000,000-event run on
+the 6 GB profile, which had 2.
 
 ## 6 GB profile, five runs per size (2026-11-17)
 
@@ -30,14 +29,11 @@ The scheduler container, which hosts the Spark driver in local mode, came within
 across five identical runs. 500,000 passes every time on this profile, with
 almost no memory to spare.
 
-## Single runs (2026-11-16)
+## 1,000,000 events on the 6 GB profile, and the first 8 GB run (2026-11-16)
 
 | Events | Runs | Outcome | Wall time | Mart rows | Run id |
 |---|---|---|---|---|---|
-| 20,000 | 2 | 2 of 2 succeeded (6 GB, 2 CPUs) | 81 s, 81 s | 17,668 | `bench_20000_1_20261116T153548`, `bench_20000_2_20261116T153753` |
-| 200,000 | 1 | succeeded (6 GB, 2 CPUs) | 146 s | 176,043 | `bench_200000_1_20261116T154023` |
-| 500,000 | 1 | succeeded (6 GB, 2 CPUs) | 293 s | 440,363 | `bench_500000_1_20261116T154404` |
-| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB, 2 CPUs) | 684 s | none | `bench_1000000_1_20261116T155012` |
+| 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile, 2 CPUs) | 684 s | none | `bench_1000000_1_20261116T155012` |
 | 1,000,000 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
 
 Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
@@ -55,8 +51,7 @@ project does not claim they do. 500,000 is the ceiling there: it passed 5 of 5,
 but the scheduler container (which hosts the Spark driver) peaked at 1,788 of
 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB profile.
 
-Wall time is trigger to terminal state and excludes stack start-up. The
-2026-11-16 20k wall times were sampled at a coarser poll interval than later runs.
+Wall time is trigger to terminal state and excludes stack start-up.
 
 ## 1,000,000 events on the 8 GB profile, measured
 
@@ -237,7 +232,7 @@ for the DAG and unpauses it.
 
 ### Where the budget could be cut (not yet applied)
 
-* The scheduler needed 2,430 MiB at 1M events, so the 6 GB profile's 1,800 MiB
+* The scheduler needed up to 2,737 MiB at 1M events, so the 6 GB profile's 1,800 MiB
   is below what 1M events require. The next profile to test is a 6 GB VM with
   the scheduler near 2.8 GB, funded from the headroom below.
 * Headroom exists in postgres (33% used), ops console (42%), redis (17%),
@@ -245,41 +240,27 @@ for the DAG and unpauses it.
 * Do not trim ClickHouse on this evidence. `load_clickhouse` lasts about 3 s, so
   a 5 s sampler can miss its peak, and the same task was rejected at a 1,280 MB
   ceiling in an earlier run. 39% is a lower bound on the real peak.
-* Three repeats are now recorded above and agree. A ceiling change still needs
+* Five repeats are now recorded above and agree. A ceiling change still needs
   its own three-run benchmark, recorded in ADR 0003 and `.env.example` together.
-
-Caveat on comparisons: the 20k to 1M rows above the `medium` section were run on
-a VM with 2 CPUs; this one had 8. Do not read the 500k and 1M times as a
-scaling curve.
-
-## Where the time goes (500,000 events, 6 GB profile, 2 CPUs)
-
-| Task | Seconds |
-|---|---|
-| generate_events | 103 |
-| ingest_to_raw | 89 |
-| spark_raw_to_staged | 66 |
-| dbt_build | 14 |
-| load_clickhouse | 3.6 |
-| serving_quality_checks, sync_ops_cases | under 3 |
 
 ## Peak container memory against its ceiling
 
-Peak MiB sampled every five seconds by `docker stats`; the ceiling is the
-`small` profile value.
+Peak MiB sampled every five seconds by `docker stats` on the 6 GB profile; the
+ceiling is the `small` profile value. The 500k column is the highest peak across
+its five runs.
 
-| Container | 200k | 500k | 1M (failed run) | Ceiling |
-|---|---|---|---|---|
-| airflow scheduler (runs Spark) | 1,440 | **1,790** | **1,798** | 1,800 |
-| seaweedfs | 598 | 720 | 523 | 1,024 |
-| kafka | 530 | 645 | 640 | 768 |
-| clickhouse | 539 | 540 | 539 | 1,280 |
+| Container | 500k (max of 5 runs) | 1M (failed run) | Ceiling |
+|---|---|---|---|
+| airflow scheduler (runs Spark) | **1,788** | **1,798** | 1,800 |
+| seaweedfs | 588 | 523 | 1,024 |
+| kafka | 487 | 640 | 768 |
+| clickhouse | 479 | 539 | 1,280 |
 
 ## What this says
 
-* The 6 GB profile finishes 500,000 events, but with almost no margin: the
-  scheduler container, which hosts the Spark driver in local mode, peaked at
-  1,790 MiB of 1,800.
+* The 6 GB profile finishes 500,000 events every time (5 of 5), but with almost
+  no margin: the scheduler container, which hosts the Spark driver in local
+  mode, peaked at 1,788 MiB of 1,800.
 * At 1,000,000 events the scheduler peak reached its ceiling (1,798 of 1,800
   MiB) and `spark_raw_to_staged` failed on both attempts. Docker did not report
   an OOM kill on a container, because the task process is what is killed, not
