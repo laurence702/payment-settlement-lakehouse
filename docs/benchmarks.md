@@ -124,9 +124,9 @@ ingest 105 s, Spark 48 s, dbt 14 s, load 3.7 s, quality checks 0.9 s, ops sync
 Airflow UI and a browser open and I did not isolate the cause, so treat Spark
 time as variable, not as a fixed figure.
 
-Across all four 8 GB runs the scheduler peaked between 2,291 and 2,512 MiB
-(75% of its 3,328 MiB ceiling at the worst), and every container stayed under
-its ceiling.
+Across all six 8 GB runs (this section, the hand-run above and the two
+repeats below) the scheduler peaked between 2,262 and 2,737 MiB (82% of its
+3,328 MiB ceiling at the worst), and every container stayed under its ceiling.
 
 ### Three repeats, 1,000,000 events, 8 GB profile
 
@@ -151,6 +151,28 @@ seaweedfs 596, api-server 290, dag-processor 191, postgres 86, console 55, redis
 All containers together peaked at 4,138 MiB. The spread between runs is under 4%
 on wall time, so the 8 GB profile is stable at 1M on this machine. The single
 UI run's slower Spark step (83 s against 47.6 s here) is unexplained.
+
+### Two more repeats (8 GB profile, 1,000,000 events, 2026-11-17)
+
+`make benchmark EVENTS=1000000 RUNS=2 PROFILE=medium`, each run from freshly
+wiped volumes, 8 CPUs, 7.82 GiB VM. Records in `benchmark-runs/20261117T050724/`.
+**2 of 2 succeeded**, no failed task, no OOM kill, no restart, 881,010 mart rows
+each time. Wall time here is Airflow's own run time.
+
+| Run | Airflow run time | Peak, all containers | Scheduler peak | ClickHouse peak | Kafka peak |
+|---|---|---|---|---|---|
+| `bench_1000000_1_20261117T050724` | 348.9 s | 3,961 MiB | 2,262 MiB | 629 MiB | 650 MiB |
+| `bench_1000000_2_20261117T051353` | 347.0 s | 4,448 MiB | 2,737 MiB | 634 MiB | 629 MiB |
+
+Median task times: generate 169.8 s, ingest 105.1 s, Spark 42.8 s, dbt 14.7 s,
+load 3.2 s, quality checks 0.9 s, ops sync 3.6 s.
+
+With these, the runner has recorded **5 of 5** successful 1,000,000-event runs on
+the 8 GB profile (345 to 357 s), plus the measured hand-run (391 s). The second
+run here set new highs: 4,448 MiB (4.34 GiB) for all containers together and
+2,737 MiB for the scheduler, so the earlier 4,138 MiB and 2,512 MiB were not the
+ceiling of the distribution. Run-to-run spread in the scheduler peak is about
+475 MiB, which is why a single run is not enough to size a ceiling.
 
 ### The `lean` profile at 1,000,000 events
 
