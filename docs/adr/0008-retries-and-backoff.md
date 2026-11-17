@@ -4,7 +4,7 @@ Status: accepted, 2026-11-16
 
 ## Context
 
-At 1,000,000 events the warehouse load failed twice with ClickHouse code 241
+At 1,000,000 transactions the warehouse load failed twice with ClickHouse code 241
 (server memory limit). The retry that followed two minutes later failed
 identically, because the cause was a ceiling set too low, not a transient fault.
 That run showed two things: a fixed single retry is too little for faults that

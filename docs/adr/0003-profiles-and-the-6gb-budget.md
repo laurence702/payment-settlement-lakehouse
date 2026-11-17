@@ -94,7 +94,7 @@ now prints the sum next to the VM's real memory and warns when it is larger.
 
 `config/profiles/small.env` is the 6 GB design target and the default.
 `medium.env` (8 GB VM) raises only the scheduler container and Spark's driver,
-the one service that hit its ceiling at 500k to 1M events. `large.env` (10 GB VM)
+the one service that hit its ceiling at 500k to 1M transactions. `large.env` (10 GB VM)
 raises them further. 10 GB is the hard upper limit this project allows itself;
 medium is tried first and large only if medium fails on memory. Apply
 one with `make profile PROFILE=small|medium|large`; only the keys a profile lists are
@@ -103,15 +103,15 @@ because at that scale the container ceilings, not the pipeline, decide whether
 a run finishes. It is not a claim about any measured result: figures belong in
 `docs/benchmarks.md` and come from `make benchmark` summaries only.
 
-### Measured peaks at 1M events (2026-11-16)
+### Measured peaks at 1M transactions (2026-11-16)
 
-On the `medium` profile, one run of 1,000,000 events (docs/benchmarks.md) peaked
+On the `medium` profile, one run of 1,000,000 transactions (docs/benchmarks.md) peaked
 at 4,094 MiB across all containers. Per container: scheduler 2,430 of 3,328,
 clickhouse 794 of 2,048, kafka 562 of 768, seaweedfs 561 of 1,024, api-server
 302 of 448, dag-processor 216 of 384, postgres 107 of 320, console 54 of 128,
 redis 8 of 48. Two consequences:
 
-* The 6 GB profile's 1,800 MiB scheduler ceiling is below what 1M events need
+* The 6 GB profile's 1,800 MiB scheduler ceiling is below what 1M transactions need
   (2,430 MiB), which is why 1M fails there.
 * ClickHouse's measured 39% is a lower bound, because the load lasts about 3 s
   and the sampler runs every 5 s. No ceiling is changed on this evidence.

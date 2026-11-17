@@ -7,7 +7,7 @@ Antigravity, Codex, Cursor). Read this before doing anything.
 
 A payment settlement lakehouse: Kafka, SeaweedFS (S3), PySpark, dbt-duckdb,
 ClickHouse, orchestrated by Airflow 3.3.1. The default profile must fit in a 6 GB
-Docker VM and is measured to 500,000 events; 1,000,000 events need the 8 GB
+Docker VM and is measured to 500,000 transactions; 1,000,000 transactions need the 8 GB
 `medium` profile (`docs/benchmarks.md`). The memory budget is a design
 constraint, not a bug: read
 `docs/adr/0003-profiles-and-the-6gb-budget.md` before touching any `MEM_*`.
@@ -61,5 +61,5 @@ assumption in the PR, and keep going.
 `np_seaweedfs` was OOM-killed at ~860 MB RSS against `MEM_S3=768m` because Go's
 GC grows toward available memory. `GOMEMLIMIT` is now set on the service
 (`S3_GOMEMLIMIT`, below `MEM_S3` in every profile) and the 500,000 and
-1,000,000-event runs in `docs/benchmarks.md` finish with no restart. Write-up:
+1,000,000-transaction runs in `docs/benchmarks.md` finish with no restart. Write-up:
 `docs/debugging/2026-09-seaweedfs-oom.md`.

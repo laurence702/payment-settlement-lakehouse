@@ -2,7 +2,7 @@
 
 All figures from the successful DAG run: `manual__2026-09-28T07:18:08.923815+00:00`
 
-> This page analyses the original 100,000-event reference run. Larger sizes, repeats and memory peaks are in [benchmarks.md](benchmarks.md).
+> This page analyses the original 100,000-transaction reference run. Larger sizes, repeats and memory peaks are in [benchmarks.md](benchmarks.md).
 
 ---
 
@@ -13,7 +13,7 @@ All figures from the successful DAG run: `manual__2026-09-28T07:18:08.923815+00:
 | Task | Duration | What it did |
 |---|---|---|
 | `preflight` | 2s | Network connectivity checks |
-| `generate_events` | 11.6s | Generated + published 100k events to Kafka |
+| `generate_events` | 11.6s | Generated + published 100k transactions to Kafka |
 | `ingest_to_raw` | 29.5s | Drained Kafka → raw Parquet on SeaweedFS |
 | `spark_raw_to_staged` | 17.8s | PySpark dedup + kobo arithmetic |
 | `dbt_build` | 8.1s | dbt models + all tests |
@@ -85,7 +85,7 @@ All figures from the successful DAG run: `manual__2026-09-28T07:18:08.923815+00:
 
 ### What IS genuinely impressive
 
-**75 seconds end-to-end on 100k events, 6 GB RAM, a laptop.**
+**75 seconds end-to-end on 100k transactions, 6 GB RAM, a laptop.**
 This is the headline stat. The full path — generate → Kafka → raw Parquet → Spark dedup → dbt/DuckDB → ClickHouse serving → quality checks — in 75 seconds, on hardware that costs nothing to run. That is a complete data lakehouse cycle, not a toy SELECT query.
 
 Comparable real-world context: a batch reconciliation job at a mid-size fintech
@@ -136,7 +136,7 @@ which is good proof of the concept. Be honest: real PSP payouts batch thousands.
 
 **75 seconds is fast — but the Kafka consumer is the slow part.**
 The `ingest_to_raw` step (29.5s) dominates. That's the Kafka drain, not a
-computation bottleneck. If this were 10M events, that step would scale linearly.
+computation bottleneck. If this were 10M transactions, that step would scale linearly.
 Mention the architectural reason: manual offset commit after durable write,
 which trades throughput for exactly-at-least-once delivery semantics.
 
@@ -209,7 +209,7 @@ holiday calendars differ by country. These are documented as future work.
 ## 4. What to Put in the LinkedIn Post (and What to Leave Out)
 
 ### Put in
-- **75 seconds, 100k events, 6 GB RAM** — the headline benchmark
+- **75 seconds, 100k transactions, 6 GB RAM** — the headline benchmark
 - **₦1.6 billion in synthetic transaction value reconciled** — makes it tangible
 - **₦51.3 million outstanding exposure surfaced** — this is the "so what"
 - **93.4% match rate with 3.1% missing and 3.5% amount-mismatched** — realistic, not perfect

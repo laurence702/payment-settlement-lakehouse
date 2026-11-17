@@ -54,7 +54,7 @@ Airflow ran all of the above in order and checked the result   (Airflow — the 
 ```
 
 All of this runs inside Docker containers on a single laptop. The default profile
-fits a 6 GB VM and is measured to 500,000 events; 1,000,000 events need the 8 GB profile.
+fits a 6 GB VM and is measured to 500,000 transactions; 1,000,000 transactions need the 8 GB profile.
 
 ### What the final answer looks like
 

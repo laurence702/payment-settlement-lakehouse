@@ -6,8 +6,25 @@ here is extrapolated; a size that has not been run is listed as not run.
 
 Environment: Docker VM with 7.82 GiB memory on an Apple M1 host (16 GB). Rows
 marked 6 GB use the `small` profile (`config/profiles/small.env`), rows marked
-8 GB use `medium`. Every run had 8 CPUs except the failed 1,000,000-event run on
+8 GB use `medium`. Every run had 8 CPUs except the failed 1,000,000-transaction run on
 the 6 GB profile, which had 2.
+
+Sizes are transactions, not Kafka messages. Each charge emits at least two
+transaction events (pending, then a terminal status, sometimes duplicated or a
+reversal), and settled charges add a settlement event. Counted with the DAG's
+defaults (seed 20260909, 14 days, 50,000-transaction chunks); the 853,846
+settlement events at 1,000,000 equal the `fct_settlements` row count of every
+1,000,000-transaction run below.
+
+| Transactions | Transaction events | Settlement events | Kafka events in total |
+|---|---|---|---|
+| 20,000 | 40,629 | 17,117 | 57,746 |
+| 200,000 | 406,291 | 170,574 | 576,865 |
+| 500,000 | 1,015,485 | 426,771 | 1,442,256 |
+| 1,000,000 | 2,030,752 | 853,846 | 2,884,598 |
+
+`make benchmark EVENTS=...` and the DAG parameter `event_count` keep their names;
+both take a transaction count.
 
 ## 6 GB profile, five runs per size (2026-11-17)
 
@@ -15,29 +32,29 @@ the 6 GB profile, which had 2.
 `benchmark-runs/20261117T082942/`. **15 of 15 succeeded**: no failed task, no
 OOM kill, no restart, and the same mart row count on every run of a size.
 
-| Events | Runs | Outcome | Airflow run time (min / median / max) | Peak, all containers | Scheduler peak (ceiling 1,800 MiB) | Mart rows | Run ids |
+| Transactions | Runs | Outcome | Airflow run time (min / median / max) | Peak, all containers | Scheduler peak (ceiling 1,800 MiB) | Mart rows | Run ids |
 |---|---|---|---|---|---|---|---|
 | 20,000 | 5 | 5 of 5 succeeded | 63.6 / 66.0 / 67.3 s | 2,435 MiB | 990 to 1,214 MiB | 17,668 | `bench_20000_1_20261117T082942`, `bench_20000_2_20261117T083139`, `bench_20000_3_20261117T083336`, `bench_20000_4_20261117T083533`, `bench_20000_5_20261117T083726` |
 | 200,000 | 5 | 5 of 5 succeeded | 113.8 / 117.3 / 119.5 s | 3,120 MiB | 1,328 to 1,585 MiB | 176,043 | `bench_200000_1_20261117T083918`, `bench_200000_2_20261117T084205`, `bench_200000_3_20261117T084453`, `bench_200000_4_20261117T084735`, `bench_200000_5_20261117T085017` |
 | 500,000 | 5 | 5 of 5 succeeded | 206.7 / 207.8 / 213.1 s | 3,435 MiB | 1,462 to 1,788 MiB | 440,363 | `bench_500000_1_20261117T085303`, `bench_500000_2_20261117T085721`, `bench_500000_3_20261117T090139`, `bench_500000_4_20261117T090557`, `bench_500000_5_20261117T091016` |
 
-Median task times at 500,000 events: generate 85.1 s, ingest 67.4 s, Spark 33.4 s,
+Median task times at 500,000 transactions: generate 85.1 s, ingest 67.4 s, Spark 33.4 s,
 dbt 10.1 s, load 1.8 s, quality checks 0.4 s, ops sync 1.5 s.
 
 The scheduler container, which hosts the Spark driver in local mode, came within
-12 MiB of its 1,800 MiB ceiling at 500,000 events, and its peak varied by 326 MiB
+12 MiB of its 1,800 MiB ceiling at 500,000 transactions, and its peak varied by 326 MiB
 across five identical runs. 500,000 passes every time on this profile, with
 almost no memory to spare.
 
-## 1,000,000 events on the 6 GB profile, and the first 8 GB run (2026-11-16)
+## 1,000,000 transactions on the 6 GB profile, and the first 8 GB run (2026-11-16)
 
-| Events | Runs | Outcome | Wall time | Mart rows | Run id |
+| Transactions | Runs | Outcome | Wall time | Mart rows | Run id |
 |---|---|---|---|---|---|
 | 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile, 2 CPUs) | 684 s | none | `bench_1000000_1_20261116T155012` |
 | 1,000,000 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
 
 Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
-runner, so memory was not recorded: 1,000,000 events, run
+runner, so memory was not recorded: 1,000,000 transactions, run
 `manual__2026-11-16T22:43:32.962376+00:00`. `spark_raw_to_staged` and `dbt_build`
 passed. `load_clickhouse` failed twice with ClickHouse code 241 (its server
 limit, 1.13 GiB, was 90% of the 1,280 MB ceiling). After the ClickHouse ceiling
@@ -46,14 +63,14 @@ was raised to 2,048 MB the task was cleared, succeeded, and the run finished
 dbt 0:14, load 0:05, quality checks 0:01, ops sync 0:03. A clean, measured
 repeat is the next section.
 
-Conclusion for sizing: 1,000,000 events do not run on the 6 GB profile, and this
+Conclusion for sizing: 1,000,000 transactions do not run on the 6 GB profile, and this
 project does not claim they do. 500,000 is the ceiling there: it passed 5 of 5,
 but the scheduler container (which hosts the Spark driver) peaked at 1,788 of
 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB profile.
 
 Wall time is trigger to terminal state and excludes stack start-up.
 
-## 1,000,000 events on the 8 GB profile, measured
+## 1,000,000 transactions on the 8 GB profile, measured
 
 Run `manual__2026-11-16T23:37:31.968781+00:00`, triggered by hand in the Airflow
 UI from freshly wiped volumes and measured by `scripts/benchmark.py --attach`
@@ -89,11 +106,11 @@ plus reversed charges that had a prior settlement. Failed charges and
 anything not settlement-eligible are not reconciled, which is why the mart (881,010 rows) is smaller than the
 input. Breaks are the subset of mart rows that need an analyst.
 
-The JSON record of this run says 999,947 events. That figure is wrong: the
+The JSON record of this run gives its size as 999,947. That figure is wrong: the
 observer read `event_count` before `preset`, the reverse of the DAG, so a run
 triggered with preset `1M` and a leftover `event_count` was logged with the
-leftover. The run generated 1,000,000 events (`fct_transactions` above), and its
-881,010 mart rows match every seeded 1,000,000-event run. `scripts/benchmark.py`
+leftover. The run generated 1,000,000 transactions (`fct_transactions` above), and its
+881,010 mart rows match every seeded 1,000,000-transaction run. `scripts/benchmark.py`
 now uses the DAG's precedence.
 
 Peak memory against the `medium` ceilings (sampled every 5 s):
@@ -115,7 +132,7 @@ this run). The summed ceilings (8.3 GiB) were never approached because the
 peaks do not coincide: Spark's peak is during `spark_raw_to_staged`, the others
 are lower while it runs.
 
-### Three repeats (8 GB profile, 1,000,000 events)
+### Three repeats (8 GB profile, 1,000,000 transactions)
 
 `make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`, each run from freshly
 wiped volumes, 8 CPUs, 7.82 GiB VM. Records in `benchmark-runs/20261116T235346/`.
@@ -138,7 +155,7 @@ Across all six 8 GB runs (this section, the hand-run above and the two
 repeats below) the scheduler peaked between 2,262 and 2,737 MiB (82% of its
 3,328 MiB ceiling at the worst), and every container stayed under its ceiling.
 
-### Three repeats, 1,000,000 events, 8 GB profile
+### Three repeats, 1,000,000 transactions, 8 GB profile
 
 `make benchmark EVENTS=1000000 RUNS=3 PROFILE=medium`, each run from wiped volumes
 (`benchmark-runs/20261116T235346/`, 8 CPUs, 7.82 GiB VM). **3 of 3 succeeded**: no
@@ -162,7 +179,7 @@ All containers together peaked at 4,138 MiB. The spread between runs is under 4%
 on wall time, so the 8 GB profile is stable at 1M on this machine. The single
 UI run's slower Spark step (83 s against 47.6 s here) is unexplained.
 
-### Two more repeats (8 GB profile, 1,000,000 events, 2026-11-17)
+### Two more repeats (8 GB profile, 1,000,000 transactions, 2026-11-17)
 
 `make benchmark EVENTS=1000000 RUNS=2 PROFILE=medium`, each run from freshly
 wiped volumes, 8 CPUs, 7.82 GiB VM. Records in `benchmark-runs/20261117T050724/`.
@@ -177,14 +194,14 @@ each time. Wall time here is Airflow's own run time.
 Median task times: generate 169.8 s, ingest 105.1 s, Spark 42.8 s, dbt 14.7 s,
 load 3.2 s, quality checks 0.9 s, ops sync 3.6 s.
 
-With these, the runner has recorded **5 of 5** successful 1,000,000-event runs on
+With these, the runner has recorded **5 of 5** successful 1,000,000-transaction runs on
 the 8 GB profile (345 to 357 s), plus the measured hand-run (391 s). The second
 run here set new highs: 4,448 MiB (4.34 GiB) for all containers together and
 2,737 MiB for the scheduler, so the earlier 4,138 MiB and 2,512 MiB were not the
 ceiling of the distribution. Run-to-run spread in the scheduler peak is about
 475 MiB, which is why a single run is not enough to size a ceiling.
 
-### The `lean` profile at 1,000,000 events
+### The `lean` profile at 1,000,000 transactions
 
 `config/profiles/lean.env`: scheduler 2,816 MB, ClickHouse 1,536 MB, SeaweedFS
 768 MB, Kafka 768 MB, the rest trimmed toward their measured peaks; ceilings sum
@@ -232,8 +249,8 @@ for the DAG and unpauses it.
 
 ### Where the budget could be cut (not yet applied)
 
-* The scheduler needed up to 2,737 MiB at 1M events, so the 6 GB profile's 1,800 MiB
-  is below what 1M events require. The next profile to test is a 6 GB VM with
+* The scheduler needed up to 2,737 MiB at 1M transactions, so the 6 GB profile's 1,800 MiB
+  is below what 1M transactions require. The next profile to test is a 6 GB VM with
   the scheduler near 2.8 GB, funded from the headroom below.
 * Headroom exists in postgres (33% used), ops console (42%), redis (17%),
   seaweedfs (55%) and dag-processor (56%).
@@ -258,10 +275,10 @@ its five runs.
 
 ## What this says
 
-* The 6 GB profile finishes 500,000 events every time (5 of 5), but with almost
+* The 6 GB profile finishes 500,000 transactions every time (5 of 5), but with almost
   no margin: the scheduler container, which hosts the Spark driver in local
   mode, peaked at 1,788 MiB of 1,800.
-* At 1,000,000 events the scheduler peak reached its ceiling (1,798 of 1,800
+* At 1,000,000 transactions the scheduler peak reached its ceiling (1,798 of 1,800
   MiB) and `spark_raw_to_staged` failed on both attempts. Docker did not report
   an OOM kill on a container, because the task process is what is killed, not
   the container. That the memory ceiling caused the failure is inferred from
