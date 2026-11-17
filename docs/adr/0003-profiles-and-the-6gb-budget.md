@@ -105,7 +105,7 @@ a run finishes. It is not a claim about any measured result: figures belong in
 
 ### Measured peaks at 1M events (2026-11-16)
 
-On the `medium` profile, one run of 999,947 events (docs/benchmarks.md) peaked
+On the `medium` profile, one run of 1,000,000 events (docs/benchmarks.md) peaked
 at 4,094 MiB across all containers. Per container: scheduler 2,430 of 3,328,
 clickhouse 794 of 2,048, kafka 562 of 768, seaweedfs 561 of 1,024, api-server
 302 of 448, dag-processor 216 of 384, postgres 107 of 320, console 54 of 128,
@@ -118,7 +118,11 @@ redis 8 of 48. Two consequences:
 
 Three repeat runs at the same size confirmed the picture: 3 of 3 succeeded, the
 scheduler peaked at 2,291 to 2,512 MiB, ClickHouse at 491 to 654 MiB, and all
-containers together at 3.9 to 4.1 GiB. The next experiment, not yet run, is a
+containers together at 3.9 to 4.1 GiB. Two later repeats (2026-11-17, 2 of 2
+succeeded) widened the range: scheduler 2,262 to 2,737 MiB, all containers up to
+4,448 MiB (4.34 GiB). A 2,737 MiB scheduler peak leaves about 80 MiB under the
+`lean` profile's 2,816 MB ceiling, so that ceiling is thinner than its three
+runs suggested. The next experiment, not yet run, is a
 6 GB VM profile with the scheduler near 2.8 GB; any ceiling trim is made from
 these numbers and recorded here in the same commit.
 

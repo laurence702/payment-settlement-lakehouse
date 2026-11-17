@@ -16,7 +16,7 @@ distribution, and times across the two CPU counts are not comparable.
 | 200,000 | 1 | succeeded | 146 s | 176,043 | `bench_200000_1_20261116T154023` |
 | 500,000 | 1 | succeeded | 293 s | 440,363 | `bench_500000_1_20261116T154404` |
 | 1,000,000 | 1 | **failed** in `spark_raw_to_staged` (6 GB profile) | 684 s | none | `bench_1000000_1_20261116T155012` |
-| 999,947 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
+| 1,000,000 | 1 | succeeded (8 GB profile) | 391 s | 881,010 | `manual__2026-11-16T23:37:31.968781+00:00` |
 
 Run by hand from the Airflow UI on the `medium` profile (8 GB VM), not by the
 runner, so memory was not recorded: 1,000,000 events, run
@@ -43,8 +43,8 @@ only say the recorded runs were not flukes.
 | 1,000,000 | 6 GB (`small`) | 1 | failed in `spark_raw_to_staged` | `bench_1000000_1_20261116T155012` |
 
 Conclusion for sizing: 1,000,000 events do not run on the 6 GB profile, and this
-project does not claim they do. 500,000 is the ceiling there, with the Spark driver
-at 1,790 of 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB
+project does not claim they do. 500,000 is the ceiling there, with the scheduler
+container (which hosts the Spark driver) at 1,790 of 1,800 MiB, so it has almost no headroom. 1,000,000 needs the 8 GB
 profile.
 
 Wall time is trigger to terminal state and excludes stack start-up. The 20k
@@ -85,6 +85,13 @@ Input versus output: the 1,000,000 generated events produce 1,000,000 rows in
 plus reversed charges that had a prior settlement. Failed charges and
 anything not settlement-eligible are not reconciled, which is why the mart (881,010 rows) is smaller than the
 input. Breaks are the subset of mart rows that need an analyst.
+
+The JSON record of this run says 999,947 events. That figure is wrong: the
+observer read `event_count` before `preset`, the reverse of the DAG, so a run
+triggered with preset `1M` and a leftover `event_count` was logged with the
+leftover. The run generated 1,000,000 events (`fct_transactions` above), and its
+881,010 mart rows match every seeded 1,000,000-event run. `scripts/benchmark.py`
+now uses the DAG's precedence.
 
 Peak memory against the `medium` ceilings (sampled every 5 s):
 
