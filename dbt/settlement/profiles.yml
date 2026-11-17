@@ -11,9 +11,8 @@ settlement:
       # from becoming a single-writer bottleneck pretending to be a warehouse.
       path: "{{ env_var('DBT_DUCKDB_PATH', '/tmp/settlement.duckdb') }}"
       # Threads: 2 instead of 4. dbt_build runs inside the Airflow scheduler
-      # container (MEM_AIRFLOW_SCHEDULER=2048m). The scheduler baseline is
-      # ~720 MB; the remaining ~1.3 GB is shared with DuckDB. Fewer threads
-      # means fewer parallel operator pipelines and a lower peak RSS.
+      # container, next to the Spark driver's baseline, so fewer threads keep the
+      # peak RSS down.
       threads: 2
       extensions:
         - httpfs
@@ -24,11 +23,10 @@ settlement:
         s3_secret_access_key: "{{ env_var('S3_SECRET_KEY', 'dataeng_local_only') }}"
         s3_use_ssl: false
         s3_url_style: path
-        # Hard cap DuckDB's allocator to what the cgroup actually allows.
-        # Without this, DuckDB asks the OS for 80% of the *VM* total (5.77 GiB),
-        # which far exceeds the scheduler container's 2 GiB cgroup ceiling.
-        # Confirmed via dmesg: dbt killed at anon-rss ~1.43 GB at 500k-event scale.
-        # 1100 MB = 2048 (cgroup) - 720 (scheduler baseline) - 228 (safety margin).
+        # Hard cap DuckDB's allocator to what the cgroup allows. Without it DuckDB
+        # sizes itself at 80% of the VM total, well above the scheduler container's
+        # ceiling, and dbt is OOM-killed. The same cap held for 1,000,000-event runs
+        # on every profile (docs/benchmarks.md), so larger profiles do not raise it.
         memory_limit: "1100MB"
 
     # No object store, no httpfs, no network. Used by `make test-dbt` to build

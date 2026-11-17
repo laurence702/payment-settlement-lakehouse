@@ -53,7 +53,8 @@ Results are loaded into ClickHouse   (a very fast analytics database)
 Airflow ran all of the above in order and checked the result   (Airflow — the job scheduler)
 ```
 
-All of this runs inside Docker containers on a single laptop — 6 GB of RAM total.
+All of this runs inside Docker containers on a single laptop. The default profile
+fits a 6 GB VM and is measured to 500,000 events; 1,000,000 events need the 8 GB profile.
 
 ### What the final answer looks like
 
@@ -185,9 +186,10 @@ generated deterministically from a seeded synthetic data model.
 > unit-testable without a live object store.
 
 **6 GB memory envelope**
-> The entire stack — Kafka, ZooKeeper, SeaweedFS, Spark (local mode inside
+> The entire stack — Kafka (KRaft), SeaweedFS, Spark (local mode inside
 > Airflow), dbt-DuckDB, ClickHouse, Airflow scheduler + webserver — must
-> fit within 6 GB. This is a hard design constraint documented in ADR-0003.
+> fit within 6 GB by default (8 GB and 10 GB profiles exist for larger runs).
+> This is a hard design constraint documented in ADR-0003.
 > Spark runs in local mode inside the Airflow scheduler container to avoid
 > spinning up a separate JVM host.
 
