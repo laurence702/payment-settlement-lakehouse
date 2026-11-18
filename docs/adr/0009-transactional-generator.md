@@ -67,8 +67,9 @@ the simpler design was chosen.
   at it until the retry fences it or `transaction.timeout.ms` (300 s) passes.
   `ingest_to_raw` runs only after `generate_events` succeeds, so in the DAG no
   transaction is open by then.
-* Each chunk adds a commit round trip and a ledger insert. The overhead at
-  1,000,000 transactions has not been measured yet (see Proof).
+* Each chunk adds a commit round trip and a ledger insert. It was not isolated,
+  but the whole task still runs in about 51 s at 1,000,000 transactions (see
+  Proof).
 
 ## Proof
 
@@ -103,5 +104,11 @@ The retry's `init_transactions` aborted it, the ingest consumer skipped it, and
 none of those events reached the raw layer. The ledger listed every chunk once
 in both runs.
 
-Not yet measured: the overhead of per-chunk commits and ledger writes at
-1,000,000 transactions. It will be added to `docs/benchmarks.md` with a run id.
+### Cost at scale (2026-11-18)
+
+Three runs per size (`docs/benchmarks.md`, "After the transactional generator"):
+`generate_events` took 48.2 to 52.4 s at 1,000,000 transactions on `medium`
+(168.3 to 171.3 s before) and 24.8 to 25.4 s at 500,000 on `small` (84.4 to
+85.7 s before). The drop comes from removing a fixed 3 s handshake wait per topic
+per chunk in the old publisher, measured directly; the per-chunk commit and
+ledger cost sits inside the remaining time and was not isolated.
