@@ -97,12 +97,14 @@ same code.
 |---|---|---|---|---|---|---|
 | `chaos_generate__20261118T165605` | 200,000 transactions, 8 chunks of 25,000 | after 2 chunks, between chunks | try 2 published 6 chunks; run `success` | 406,026 transaction events and 170,665 settlement events, exactly as expected | same counts, no extras | 0 |
 | `chaos_generate__20261118T170042` | 200,000 transactions, 4 chunks of 50,000 | 1.5 s after chunk 1, inside chunk 2's open transaction | try 2 published 3 chunks; run `success` | 406,115 and 171,012, exactly as expected | same counts, no extras | 9,448 transaction events |
+| `chaos_generate__20261118T191125` | 200,000 transactions, 4 chunks of 50,000 | 1.5 s after chunk 1, inside chunk 2's open transaction | try 2 published 3 chunks; run `success` | 406,111 and 170,934, exactly as expected | same counts, no extras | 64,949 transaction events |
 
-The second run is the one that exercises the transaction: 9,448 events from the
-killed attempt reached the broker inside a transaction that never committed.
-The retry's `init_transactions` aborted it, the ingest consumer skipped it, and
-none of those events reached the raw layer. The ledger listed every chunk once
-in both runs.
+The second and third runs exercise the transaction: 9,448 and 64,949 events
+from the killed attempts reached the broker inside transactions that never
+committed.
+The retry's `init_transactions` aborted them, the ingest consumer skipped them,
+and none of those events reached the raw layer. The ledger listed every chunk
+once in every run.
 
 ### Cost at scale (2026-11-18)
 
