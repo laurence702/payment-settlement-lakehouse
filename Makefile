@@ -13,7 +13,7 @@ COMPOSE := docker compose --env-file .env
 ALL_PROFILES := core,stream,warehouse,airflow,ops
 
 .DEFAULT_GOAL := help
-.PHONY: chaos-retry benchmark e2e e2e-setup profile help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
+.PHONY: chaos-retry chaos-generate benchmark e2e e2e-setup profile help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
         test test-fast test-spark test-dbt lint venv dag-trigger dag-logs \
         airflow-shell dbt-shell ch ops-up ops-down test-ops clean
 
@@ -81,6 +81,9 @@ benchmark:  ## Repeat full runs and record timings and memory: make benchmark EV
 
 chaos-retry:  ## Stop ClickHouse mid-run and prove load_clickhouse retries with backoff and recovers
 	@.venv/bin/python scripts/chaos_retry.py $(ARGS)
+
+chaos-generate:  ## Kill generate_events mid-publish and prove the retry adds no duplicates (ADR 0009)
+	@.venv/bin/python scripts/chaos_generate.py $(ARGS)
 
 verify:  ## The done-check: full run + restart/OOM/row-count asserts. Exit 0 = pass. Evidence in verify-report/
 	@./scripts/verify.sh

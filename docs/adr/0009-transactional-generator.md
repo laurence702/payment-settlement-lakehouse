@@ -68,7 +68,7 @@ the simpler design was chosen.
   `ingest_to_raw` runs only after `generate_events` succeeds, so in the DAG no
   transaction is open by then.
 * Each chunk adds a commit round trip and a ledger insert. The overhead at
-  1,000,000 transactions has not been measured yet.
+  1,000,000 transactions has not been measured yet (see Proof).
 
 ## Proof
 
@@ -79,6 +79,29 @@ committed topics exactly as often as a clean run, that the same rerun without a
 ledger doubles the topics, and that a delivery failure aborts the chunk and
 leaves the ledger empty. `make test-ops` runs the Postgres ledger test.
 
-Not yet run against the stack: killing the generator mid-publish and checking
-the committed topics and raw Parquet for duplicates, and the overhead benchmark.
-Results will be added here with their run ids.
+`make chaos-generate` triggers a run with a seed no other run uses, waits until
+the ledger lists `--kill-after-chunks` chunks, then sends SIGKILL to the
+`generate_events` task process: no abort and no cleanup. Airflow retries the
+task. The check regenerates the expected event_ids from the seed and counts
+them in both topics (read_committed and read_uncommitted) and in the raw
+Parquet layer. Reports go to `chaos-report/`.
+
+### Results (2026-11-18)
+
+Both runs used the default profile's container limits (scheduler 1,800 MiB) in a
+Docker VM with 8 CPUs and 7.8 GiB of memory, after `make verify` passed on the
+same code.
+
+| Run | Shape | Killed | Retry | Committed topics | Raw Parquet | Aborted events seen only by read_uncommitted |
+|---|---|---|---|---|---|---|
+| `chaos_generate__20261118T165605` | 200,000 transactions, 8 chunks of 25,000 | after 2 chunks, between chunks | try 2 published 6 chunks; run `success` | 406,026 transaction events and 170,665 settlement events, exactly as expected | same counts, no extras | 0 |
+| `chaos_generate__20261118T170042` | 200,000 transactions, 4 chunks of 50,000 | 1.5 s after chunk 1, inside chunk 2's open transaction | try 2 published 3 chunks; run `success` | 406,115 and 171,012, exactly as expected | same counts, no extras | 9,448 transaction events |
+
+The second run is the one that exercises the transaction: 9,448 events from the
+killed attempt reached the broker inside a transaction that never committed.
+The retry's `init_transactions` aborted it, the ingest consumer skipped it, and
+none of those events reached the raw layer. The ledger listed every chunk once
+in both runs.
+
+Not yet measured: the overhead of per-chunk commits and ledger writes at
+1,000,000 transactions. It will be added to `docs/benchmarks.md` with a run id.
