@@ -256,8 +256,10 @@ make benchmark EVENTS="500000 1000000" RUNS=3 PROFILE=medium
 Each run records task durations, every container's peak memory, OOM kills,
 restarts and the final mart row count. Failed runs are recorded, not retried.
 Use `--attach` (`python scripts/benchmark.py --attach`) to measure a run you
-start yourself from the Airflow UI. Tasks that are safe to repeat retry three
-times with exponential backoff ([ADR 0008](docs/adr/0008-retries-and-backoff.md));
+start yourself from the Airflow UI. Every task retries three times with
+exponential backoff ([ADR 0008](docs/adr/0008-retries-and-backoff.md)). The
+generator publishes one Kafka transaction per chunk and a retry skips chunks
+already committed ([ADR 0009](docs/adr/0009-transactional-generator.md));
 `make chaos-retry` stops ClickHouse mid-run to prove it recovers.
 Records and a `summary.md` land in `benchmark-runs/` (gitignored); see
 [docs/benchmarks.md](docs/benchmarks.md) for what has been measured so far.
