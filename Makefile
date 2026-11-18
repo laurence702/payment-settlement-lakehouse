@@ -148,7 +148,7 @@ test-ops:  ## Ops store tests against a real Postgres (throwaway container)
 	@for i in $$(seq 1 30); do \
 	  docker exec np_test_pg pg_isready -U dataeng >/dev/null 2>&1 && break; sleep 1; done
 	@POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=$(TEST_PG_PORT) OPS_REQUIRE_POSTGRES=1 \
-	  .venv/bin/python -m pytest tests/test_ops_store_contract.py tests/test_ops_app.py; \
+	  .venv/bin/python -m pytest tests/test_ops_store_contract.py tests/test_ops_app.py tests/test_publish_ledger.py; \
 	  rc=$$?; docker stop np_test_pg >/dev/null 2>&1; exit $$rc
 
 ops-up:  ## Start the analyst console (needs the core profile; see docs/adr/0007)

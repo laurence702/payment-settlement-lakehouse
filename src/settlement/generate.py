@@ -323,89 +323,150 @@ def generate_events(
     return tx_events, settlements
 
 
-def publish(events: list[dict], topic: str, bootstrap: str, key_field: str) -> int:
-    """Publish to Kafka, keyed so all events for one reference share a partition.
+_DEFAULT_CHUNK_SIZE = 50_000
 
-    Keying matters: without it, two events for the same transaction can land on
-    different partitions and any per-key ordering guarantee is gone.
 
-    Producer tuning for high-volume runs (v2 / 1M transactions):
-      linger.ms 100: give the broker more time to batch messages before flush.
-        At 1M+ messages the network RTT dominates; waiting 100ms per batch
-        costs nothing measurable and roughly doubles throughput vs 50ms.
-      batch.size 128k: larger batches reduce per-record overhead at scale.
-        Tested safe at local[2] Kafka with the 6 GB VM memory budget.
-      queue.buffering.max.messages 200k: headroom for a full 50k-event chunk
-        (each transaction emits ~2 events) without BufferError backpressure
-        stalls during the produce loop.
+def _producer_config(bootstrap: str, transactional_id: str, transaction_timeout_ms: int) -> dict:
+    """Producer settings for the transactional publisher.
+
+    transactional.id: stable per run, so a retried task fences the failed
+      attempt's producer and the broker aborts its open transaction. It also
+      implies enable.idempotence, which is set explicitly for readability.
+    transaction.timeout.ms 300 s: a 50k-transaction chunk is ~144k messages; the
+      broker aborts a transaction left open longer than this, which bounds how
+      long a crashed attempt can hold back read_committed consumers.
+    linger.ms 100 / batch.size 128k: larger batches cut per-record overhead at
+      1M scale; waiting 100 ms per batch costs nothing measurable.
+    queue.buffering.max.messages 200k: room for a full chunk's messages without
+      BufferError stalls in the produce loop.
     """
-    from confluent_kafka import Producer
+    return {
+        "bootstrap.servers": bootstrap,
+        "transactional.id": transactional_id,
+        "transaction.timeout.ms": transaction_timeout_ms,
+        "enable.idempotence": True,
+        "linger.ms": 100,
+        "batch.size": 128 * 1024,
+        "compression.type": "lz4",
+        "queue.buffering.max.messages": 200_000,
+    }
 
-    producer = Producer(
-        {
-            "bootstrap.servers": bootstrap,
-            "linger.ms": 100,
-            "batch.size": 128 * 1024,
-            "compression.type": "lz4",
-            "enable.idempotence": True,
-            # With idempotence enabled, librdkafka must complete a metadata
-            # fetch AND allocate a Producer ID (PID) from the broker before
-            # any message can be queued. Until that handshake is done the
-            # internal queue capacity is effectively zero, so the very first
-            # produce() call raises BufferError instantly. Pre-warming via
-            # an initial poll() lets the handshake complete before we start
-            # sending. 200k headroom covers a full 50k-event chunk.
-            "queue.buffering.max.messages": 200_000,
-        }
-    )
 
-    # Pre-warm: block up to 3 s so the broker connection, metadata fetch, and
-    # idempotent PID registration all finish before we touch the produce loop.
-    producer.poll(3)
+class TransactionalPublisher:
+    """Publishes one chunk per Kafka transaction, across both topics.
 
-    delivered = 0
-    failures: list[str] = []
+    A chunk's transaction and settlement events commit together or not at all,
+    and read_committed consumers (ingest.py) never see an aborted chunk. Messages
+    are keyed by transaction_ref so all events for one reference share a
+    partition and keep their order.
+    """
 
-    def _cb(err, _msg):
-        nonlocal delivered
-        if err is not None:
-            failures.append(str(err))
-        else:
-            delivered += 1
+    def __init__(
+        self,
+        bootstrap: str,
+        transactional_id: str,
+        transaction_timeout_ms: int = 300_000,
+        init_timeout_s: float = 60.0,
+        flush_timeout_s: float = 300.0,
+        producer_factory=None,
+    ) -> None:
+        if producer_factory is None:
+            from confluent_kafka import Producer as producer_factory
+        self._producer = producer_factory(
+            _producer_config(bootstrap, transactional_id, transaction_timeout_ms)
+        )
+        self._flush_timeout_s = flush_timeout_s
+        # Registers the transactional ID with the coordinator. For an ID used by
+        # an earlier attempt, this fences that producer and aborts its open
+        # transaction before anything new is sent.
+        self._producer.init_transactions(init_timeout_s)
 
-    for i, ev in enumerate(events):
-        while True:
-            try:
-                producer.produce(
-                    topic,
-                    key=ev[key_field].encode(),
-                    value=json.dumps(ev, separators=(",", ":")).encode(),
-                    on_delivery=_cb,
-                )
-                break
-            except BufferError:
-                # poll() drains delivered callbacks and frees queue slots.
-                # Guard with its own try/except: poll() itself can raise
-                # BufferError when the queue is still saturated, which would
-                # otherwise escape the retry loop.
-                with contextlib.suppress(BufferError):
-                    producer.poll(0.5)
-        # Poll every 500 messages at scale to keep the in-flight window
-        # drained without excessive syscall overhead.
-        if i % 500 == 0:
-            producer.poll(0)
-    producer.flush(300)
+    def _produce_all(self, events: list[dict], topic: str, key_field: str, on_delivery) -> None:
+        producer = self._producer
+        for i, ev in enumerate(events):
+            while True:
+                try:
+                    producer.produce(
+                        topic,
+                        key=ev[key_field].encode(),
+                        value=json.dumps(ev, separators=(",", ":")).encode(),
+                        on_delivery=on_delivery,
+                    )
+                    break
+                except BufferError:
+                    # poll() serves delivery callbacks and frees queue slots. It
+                    # can itself raise BufferError while the queue is saturated.
+                    with contextlib.suppress(BufferError):
+                        producer.poll(0.5)
+            if i % 500 == 0:
+                producer.poll(0)
 
-    if failures:
-        raise RuntimeError(f"{len(failures)} deliveries failed, first: {failures[0]}")
-    return delivered
+    def publish_chunk(self, batches: list[tuple[list[dict], str, str]]) -> list[int]:
+        """Publish (events, topic, key_field) batches in one transaction.
+
+        Returns the delivered count per batch. On any failure the transaction is
+        aborted and the error re-raised, so nothing from this chunk is visible.
+        """
+        producer = self._producer
+        delivered = [0] * len(batches)
+        failures: list[str] = []
+
+        def callback_for(idx: int):
+            def _cb(err, _msg):
+                if err is not None:
+                    failures.append(str(err))
+                else:
+                    delivered[idx] += 1
+
+            return _cb
+
+        producer.begin_transaction()
+        try:
+            for idx, (events, topic, key_field) in enumerate(batches):
+                self._produce_all(events, topic, key_field, callback_for(idx))
+            remaining = producer.flush(self._flush_timeout_s)
+            if remaining:
+                raise RuntimeError(f"{remaining} messages still queued after flush")
+            if failures:
+                raise RuntimeError(f"{len(failures)} deliveries failed, first: {failures[0]}")
+            producer.commit_transaction(self._flush_timeout_s)
+        except BaseException:
+            # The original error is the one worth reporting. An abort can fail
+            # too (for example after fencing), and the broker then aborts the
+            # transaction itself at transaction.timeout.ms.
+            with contextlib.suppress(Exception):
+                producer.abort_transaction(self._flush_timeout_s)
+            raise
+        return delivered
 
 
 # ---------------------------------------------------------------------------
 # v2: chunked generation for 1M+ transaction scale
 # ---------------------------------------------------------------------------
 
-_DEFAULT_CHUNK_SIZE = 50_000
+
+def chunk_starts(n_transactions: int, chunk_size: int) -> range:
+    """Offsets of each chunk, in transactions from the start of the run."""
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    return range(0, n_transactions, chunk_size)
+
+
+def generate_chunk(
+    chunk_start: int,
+    n_transactions: int,
+    days: int,
+    seed: int,
+    chunk_size: int = _DEFAULT_CHUNK_SIZE,
+    **kwargs,
+):
+    """Generate the chunk that starts at `chunk_start`, seeded with seed + chunk_start.
+
+    Each chunk depends only on its own start offset, so a retry that skips
+    committed chunks regenerates the remaining ones exactly as before.
+    """
+    chunk_n = min(chunk_size, n_transactions - chunk_start)
+    return generate_events(n_transactions=chunk_n, days=days, seed=seed + chunk_start, **kwargs)
 
 
 def iter_chunks(
@@ -430,14 +491,8 @@ def iter_chunks(
     spread over the same calendar period. kwargs are forwarded to
     generate_events() unchanged (e.g. settlement_source_delay_days, end_date).
     """
-    for chunk_start in range(0, n_transactions, chunk_size):
-        chunk_n = min(chunk_size, n_transactions - chunk_start)
-        yield generate_events(
-            n_transactions=chunk_n,
-            days=days,
-            seed=seed + chunk_start,
-            **kwargs,
-        )
+    for start in chunk_starts(n_transactions, chunk_size):
+        yield generate_chunk(start, n_transactions, days, seed, chunk_size, **kwargs)
 
 
 def generate_and_publish_chunked(
@@ -448,25 +503,54 @@ def generate_and_publish_chunked(
     topic_transactions: str,
     topic_settlements: str,
     chunk_size: int = _DEFAULT_CHUNK_SIZE,
+    run_key: str | None = None,
+    ledger=None,
+    publisher_factory=None,
     **kwargs,
 ) -> dict[str, int]:
-    """Generate and publish n_transactions in chunk_size batches.
+    """Generate and publish n_transactions, one Kafka transaction per chunk.
 
-    Returns totals: {"transactions_delivered": N, "settlements_delivered": M,
-                     "chunks": K}.
+    `run_key` names this request (see publish_ledger.run_key). Chunks already in
+    `ledger` under that key are skipped, so a retried task publishes only what
+    the failed attempt did not commit. Without a ledger (CLI runs) every chunk
+    is published and the transactional ID is unique to this call.
 
-    This is the v2 entry point for Airflow DAG tasks that need to scale beyond
-    the single-list memory envelope of the original generate_events() call.
-    The DAG can use this with --count 1000000 without touching the 6 GB budget.
+    Returns {"transactions_delivered", "settlements_delivered", "chunks",
+    "chunks_skipped"}; the delivered counts cover this call only.
     """
-    totals: dict[str, int] = {"transactions_delivered": 0, "settlements_delivered": 0, "chunks": 0}
-    for tx, stl in iter_chunks(n_transactions, days, seed, chunk_size, **kwargs):
-        totals["transactions_delivered"] += publish(
-            tx, topic_transactions, bootstrap, "transaction_ref"
+    from settlement.publish_ledger import InMemoryChunkLedger, transactional_id
+
+    if run_key is None:
+        run_key = f"adhoc-{uuid.uuid4().hex}"
+    if ledger is None:
+        ledger = InMemoryChunkLedger()
+    if publisher_factory is None:
+        publisher_factory = TransactionalPublisher
+
+    done = ledger.committed(run_key)
+    totals: dict[str, int] = {
+        "transactions_delivered": 0,
+        "settlements_delivered": 0,
+        "chunks": 0,
+        "chunks_skipped": 0,
+    }
+    publisher = None
+    for start in chunk_starts(n_transactions, chunk_size):
+        if start in done:
+            totals["chunks_skipped"] += 1
+            continue
+        if publisher is None:
+            publisher = publisher_factory(bootstrap, transactional_id(run_key))
+        tx, stl = generate_chunk(start, n_transactions, days, seed, chunk_size, **kwargs)
+        n_tx, n_stl = publisher.publish_chunk(
+            [
+                (tx, topic_transactions, "transaction_ref"),
+                (stl, topic_settlements, "transaction_ref"),
+            ]
         )
-        totals["settlements_delivered"] += publish(
-            stl, topic_settlements, bootstrap, "transaction_ref"
-        )
+        ledger.record(run_key, start, n_tx, n_stl)
+        totals["transactions_delivered"] += n_tx
+        totals["settlements_delivered"] += n_stl
         totals["chunks"] += 1
     return totals
 
@@ -483,8 +567,8 @@ def main() -> None:
         type=int,
         default=_DEFAULT_CHUNK_SIZE,
         help=(
-            "Generate and publish this many transactions at a time. "
-            "Keeps peak RSS bounded regardless of --count. "
+            "Generate and publish this many transactions at a time, one Kafka "
+            "transaction per chunk. Keeps peak RSS bounded regardless of --count. "
             f"Default: {_DEFAULT_CHUNK_SIZE:,}."
         ),
     )
@@ -511,31 +595,21 @@ def main() -> None:
 
     s = get_settings()
     bootstrap = args.bootstrap or s.kafka_bootstrap
-
-    if args.count <= args.chunk_size:
-        # Small run — original single-batch path for backward compatibility.
-        tx, stl = generate_events(args.count, args.days, args.seed)
-        print(f"generated {len(tx)} transaction events and {len(stl)} settlement events")
-        n1 = publish(tx, s.topic_transactions, bootstrap, "transaction_ref")
-        n2 = publish(stl, s.topic_settlements, bootstrap, "transaction_ref")
-        print(f"published {n1} -> {s.topic_transactions}, {n2} -> {s.topic_settlements}")
-    else:
-        # Large run — chunked path that keeps peak RAM bounded.
-        print(f"chunked publish: {args.count:,} transactions in chunks of {args.chunk_size:,}")
-        totals = generate_and_publish_chunked(
-            n_transactions=args.count,
-            days=args.days,
-            seed=args.seed,
-            bootstrap=bootstrap,
-            topic_transactions=s.topic_transactions,
-            topic_settlements=s.topic_settlements,
-            chunk_size=args.chunk_size,
-        )
-        print(
-            f"published {totals['transactions_delivered']:,} -> {s.topic_transactions}, "
-            f"{totals['settlements_delivered']:,} -> {s.topic_settlements} "
-            f"({totals['chunks']} chunks)"
-        )
+    print(f"publishing {args.count:,} transactions in chunks of {args.chunk_size:,}")
+    totals = generate_and_publish_chunked(
+        n_transactions=args.count,
+        days=args.days,
+        seed=args.seed,
+        bootstrap=bootstrap,
+        topic_transactions=s.topic_transactions,
+        topic_settlements=s.topic_settlements,
+        chunk_size=args.chunk_size,
+    )
+    print(
+        f"published {totals['transactions_delivered']:,} -> {s.topic_transactions}, "
+        f"{totals['settlements_delivered']:,} -> {s.topic_settlements} "
+        f"({totals['chunks']} chunks)"
+    )
 
 
 if __name__ == "__main__":
