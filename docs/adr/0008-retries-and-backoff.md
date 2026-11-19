@@ -17,9 +17,10 @@ cannot repair a deterministic shortfall.
   backoff, capped at 8 minutes. Delays run 1, 2 and 4 minutes, so a dependency
   that is down for a few minutes is waited out, and the per-task
   `execution_timeout` still bounds the total.
-* `generate_events` is the exception: `retries=0`. It publishes the whole event
-  set to Kafka, so a retry would publish it twice. A failed generation is fixed
-  by rerunning the DAG run.
+* `generate_events` was the exception: `retries=0`. It published the whole event
+  set to Kafka, so a retry would have published it twice. Superseded on
+  2026-11-18 by ADR 0009: it now publishes one Kafka transaction per chunk,
+  skips chunks a failed attempt committed, and inherits the default retries.
 * Every other task is idempotent and safe to repeat. `load_clickhouse` drops and
   rebuilds its shadow table before the atomic swap; Spark and dbt overwrite their
   outputs; the ops sync is an upsert of system columns; `ingest_to_raw` resumes

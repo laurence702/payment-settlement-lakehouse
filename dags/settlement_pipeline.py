@@ -26,7 +26,9 @@ DEFAULT_ARGS = {
     # a transient fault, such as ClickHouse finishing a background merge or
     # Spark's driver losing a race for memory, time to clear. A failure that
     # repeats identically four times is not transient and should page a human.
-    # Only tasks that are safe to re-run inherit this; see generate_events.
+    # Every task is safe to re-run: generate_events publishes one Kafka
+    # transaction per chunk and skips chunks a failed attempt already committed
+    # (docs/adr/0009).
     "retries": 3,
     "retry_delay": pendulum.duration(minutes=1),
     "retry_exponential_backoff": True,
@@ -90,13 +92,18 @@ def settlement_pipeline():
             )
         return {name: f"{h}:{p}" for name, (h, p) in targets.items()}
 
-    # A retry would publish the whole event set to Kafka a second time, so this
-    # task never retries; rerun the DAG run instead.
-    @task(retries=0)
+    @task
     def generate_events(**context) -> dict:
-        """Publish synthetic transaction and settlement events to Kafka in bounded chunks."""
+        """Publish synthetic events to Kafka, one transaction per chunk.
+
+        Committed chunks are recorded in pipeline.publish_ledger under a key
+        built from the DAG run id and the generate parameters. A retry skips
+        them, so the topics receive each chunk once (docs/adr/0009).
+        """
         from settlement.config import get_settings
         from settlement.generate import generate_and_publish_chunked
+        from settlement.ops.migrate import migrate
+        from settlement.publish_ledger import PostgresChunkLedger, run_key
 
         params = context["params"]
         if params["skip_generate"]:
@@ -113,6 +120,7 @@ def settlement_pipeline():
         seed = int(params["seed"])
 
         s = get_settings()
+        migrate(s)
         totals = generate_and_publish_chunked(
             n_transactions=count,
             days=days,
@@ -121,11 +129,14 @@ def settlement_pipeline():
             topic_transactions=s.topic_transactions,
             topic_settlements=s.topic_settlements,
             chunk_size=chunk_size,
+            run_key=run_key(context["run_id"], count, days, seed, chunk_size),
+            ledger=PostgresChunkLedger(s),
         )
         return {
             "transactions": totals["transactions_delivered"],
             "settlements": totals["settlements_delivered"],
             "chunks": totals["chunks"],
+            "chunks_skipped": totals["chunks_skipped"],
         }
 
     @task

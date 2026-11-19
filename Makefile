@@ -13,7 +13,7 @@ COMPOSE := docker compose --env-file .env
 ALL_PROFILES := core,stream,warehouse,airflow,ops
 
 .DEFAULT_GOAL := help
-.PHONY: chaos-retry benchmark e2e e2e-setup profile help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
+.PHONY: chaos-retry chaos-generate benchmark e2e e2e-setup profile help bootstrap verify-images preflight build up down stop ps mem logs demo verify \
         test test-fast test-spark test-dbt lint venv dag-trigger dag-logs \
         airflow-shell dbt-shell ch ops-up ops-down test-ops clean
 
@@ -82,6 +82,9 @@ benchmark:  ## Repeat full runs and record timings and memory: make benchmark EV
 chaos-retry:  ## Stop ClickHouse mid-run and prove load_clickhouse retries with backoff and recovers
 	@.venv/bin/python scripts/chaos_retry.py $(ARGS)
 
+chaos-generate:  ## Kill generate_events mid-publish and prove the retry adds no duplicates (ADR 0009)
+	@.venv/bin/python scripts/chaos_generate.py $(ARGS)
+
 verify:  ## The done-check: full run + restart/OOM/row-count asserts. Exit 0 = pass. Evidence in verify-report/
 	@./scripts/verify.sh
 
@@ -148,7 +151,7 @@ test-ops:  ## Ops store tests against a real Postgres (throwaway container)
 	@for i in $$(seq 1 30); do \
 	  docker exec np_test_pg pg_isready -U dataeng >/dev/null 2>&1 && break; sleep 1; done
 	@POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=$(TEST_PG_PORT) OPS_REQUIRE_POSTGRES=1 \
-	  .venv/bin/python -m pytest tests/test_ops_store_contract.py tests/test_ops_app.py; \
+	  .venv/bin/python -m pytest tests/test_ops_store_contract.py tests/test_ops_app.py tests/test_publish_ledger.py; \
 	  rc=$$?; docker stop np_test_pg >/dev/null 2>&1; exit $$rc
 
 ops-up:  ## Start the analyst console (needs the core profile; see docs/adr/0007)

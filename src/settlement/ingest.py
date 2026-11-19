@@ -11,6 +11,10 @@ Key operational constraints:
   deduplication absorbs them instead of silently losing data. Auto-commit is
   disabled for this reason.
 
+* The consumer reads with isolation.level=read_committed, so events from a
+  generator transaction that was aborted (a crashed or retried chunk) never
+  reach the raw layer. See docs/adr/0009.
+
 * The raw layer is append-only and keeps duplicates, out-of-order events and
   malformed rows. Cleaning here would destroy the evidence you need when a
   number looks wrong three weeks later.
@@ -90,6 +94,26 @@ def _coerce(rec: dict, schema: pa.Schema) -> dict:
     return out
 
 
+def consumer_config(settings: Settings, group_id: str) -> dict:
+    """Consumer settings for the raw-layer drain."""
+    return {
+        "bootstrap.servers": settings.kafka_bootstrap,
+        "group.id": group_id,
+        "auto.offset.reset": "earliest",
+        # Manual commit: see module docstring.
+        "enable.auto.commit": False,
+        # librdkafka's default, stated so it cannot change silently: the
+        # generator publishes in transactions and aborted chunks must be skipped.
+        "isolation.level": "read_committed",
+        "max.poll.interval.ms": 300_000,
+        "session.timeout.ms": 45_000,
+        # Throughput tuning for 500k-1M scale
+        "fetch.message.max.bytes": 10_485_760,
+        "max.partition.fetch.bytes": 5_242_880,
+        "queued.min.messages": 100_000,
+    }
+
+
 def drain_topic(
     topic: str,
     schema: pa.Schema,
@@ -103,21 +127,7 @@ def drain_topic(
     """Consume `topic` until it goes quiet, writing Parquet to the raw bucket."""
     from confluent_kafka import Consumer, KafkaError
 
-    consumer = Consumer(
-        {
-            "bootstrap.servers": settings.kafka_bootstrap,
-            "group.id": group_id,
-            "auto.offset.reset": "earliest",
-            # Manual commit: see module docstring.
-            "enable.auto.commit": False,
-            "max.poll.interval.ms": 300_000,
-            "session.timeout.ms": 45_000,
-            # Throughput tuning for 500k-1M scale
-            "fetch.message.max.bytes": 10_485_760,
-            "max.partition.fetch.bytes": 5_242_880,
-            "queued.min.messages": 100_000,
-        }
-    )
+    consumer = Consumer(consumer_config(settings, group_id))
     consumer.subscribe([topic])
 
     s3 = settings.s3_filesystem()

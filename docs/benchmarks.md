@@ -289,6 +289,39 @@ its five runs.
 | kafka | 487 | 640 | 663 | 768 |
 | clickhouse | 479 | 539 | **1,204** | 1,280 |
 
+## After the transactional generator (2026-11-18)
+
+`generate_events` now publishes one Kafka transaction per chunk and records each
+chunk in a Postgres ledger (ADR 0009). Three runs per size from wiped volumes,
+same 7.82 GiB, 8 CPU VM, DAG defaults. Records in
+`benchmark-runs/20261118T172317/` (1M, `medium`) and
+`benchmark-runs/20261118T173745/` (500k, `small`). All 6 of 6 succeeded with every
+task on its first try, no OOM kill, no restart, and the same mart row counts as
+before (881,010 and 440,363).
+
+| Transactions | Profile | `generate_events` before (5 runs) | `generate_events` now (3 runs) | Airflow run time now | Peak, all containers | Scheduler peak | Run ids |
+|---|---|---|---|---|---|---|---|
+| 500,000 | 6 GB (`small`) | 84.4 to 85.7 s | 24.8 / 25.3 / 25.4 s | 146.0 / 148.4 / 151.7 s | 3,053 to 3,230 MiB | 1,503 to 1,625 of 1,800 MiB | `bench_500000_1_20261118T173745`, `bench_500000_2_20261118T174103`, `bench_500000_3_20261118T174422` |
+| 1,000,000 | 8 GB (`medium`) | 168.3 to 171.3 s | 48.2 / 50.7 / 52.4 s | 225.5 / 238.7 / 252.5 s | 3,857 to 4,103 MiB | 2,226 to 2,331 of 3,328 MiB | `bench_1000000_1_20261118T172317`, `bench_1000000_2_20261118T172821`, `bench_1000000_3_20261118T173310` |
+
+The "before" column is the five runs per size recorded above: at 500,000,
+`bench_500000_1_20261117T085303` to `bench_500000_5_20261117T091016`; at
+1,000,000, `bench_1000000_1_20261116T235346`, `bench_1000000_2_20261117T000019`,
+`bench_1000000_3_20261117T000650`, `bench_1000000_1_20261117T050724` and
+`bench_1000000_2_20261117T051353`.
+
+Transactions did not slow the generator. It got faster, by about 120 s at 1M and
+60 s at 500k, and the cause is not the transactions. The old `publish()` opened a
+new producer for each topic in each chunk and called `poll(3)` on it to wait for
+the broker handshake. With nothing to deliver yet, that call waits the full 3
+seconds: timed in the scheduler container on 2026-11-18, three fresh idempotent
+producers each returned from `poll(3)` after 3.02 to 3.03 s with zero events
+served. 20 chunks x 2 topics x 3 s = 120 s at 1M, and 10 x 2 x 3 = 60 s at 500k,
+which matches the measured drops. The new publisher opens one producer per task
+and `init_transactions` completes the handshake without a fixed wait. The cost
+of the per-chunk commits and ledger inserts is therefore inside the remaining
+~50 s at 1M; it has not been measured separately.
+
 ## What this says
 
 * The 6 GB profile finishes 500,000 transactions every time (5 of 5), but with almost
